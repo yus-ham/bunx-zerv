@@ -37,8 +37,12 @@ export function parseHumanReadableBytes(size_str: string) {
 }
 
 export function getClientMaxBodySize(config: object) {
-    const max = config.http.client_max_body_size
-    return max ? parseHumanReadableBytes(max) : undefined
+    if (typeof config.cached.http_client_max_body_size === undefined) {
+        const max = config.http.client_max_body_size
+        config.cached.http_client_max_body_size = parseHumanReadableBytes(max) || '';
+        return max ? cached.http_client_max_body_size : undefined
+    }
+    return config.cached.http_client_max_body_size || undefined
 }
 
 export function getMaxWorker(config: object) {

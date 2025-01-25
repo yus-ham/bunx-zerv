@@ -10,6 +10,7 @@ const loadConfig = () => parser.readConfigFile('config/nginx.conf', {
 })
 
 const global_config = loadConfig()
+global_config.cached = {}
 
 watch('config', { recursive: true })
     .on('change', (event, file_name) => {
@@ -21,17 +22,18 @@ watch('config', { recursive: true })
 const HTTP_SWITCHING_PROTOCOLS = 101
 const HTTP_NOT_FOUND = 404
 
-type ActionOpts = {
+type HandlerOpts = {
     req: Request;
     req_url: URL;
     server: Server;
+    server_cfg: object;
     path_prefix: string;
 }
 
 const location_handlers = {
-    async try_files(files: string, opts: ActionOpts) {
+    async try_files(files: string, opts: HandlerOpts) {
         for (const entry of files?.split(' ') || []) {
-            const file_path = global_config.http.server.root + entry.replace('$uri', opts.req_url.pathname)
+            const file_path = opts.server_cfg.root + entry.replace('$uri', opts.req_url.pathname)
             const file: BunFile = Bun.file(file_path)
             //console.info('try_files:', {entry, file_path})
 
@@ -45,7 +47,7 @@ const location_handlers = {
         }
     },
 
-    async proxy_pass(target_url: string, opts: ActionOpts) {
+    async proxy_pass(target_url: string, opts: HandlerOpts) {
         //console.info('proxy_pass:', target_url)
 
         target_url = target_url + opts.req_url.pathname.slice(opts.path_prefix?.length!) + opts.req_url.search
@@ -82,36 +84,43 @@ const location_handlers = {
     async proxy_cache_bypass() { },
 }
 
+async function runActions(actions: object[], opts = {}, response: never) {
+    for (const [action, argument] of Object.entries(actions)) {
+        // @ts-ignore
+        if (response = await location_handlers[action](argument, opts))
+            return response
+    }
+}
+
 function toArray(data: any) {
     return Array.isArray(data) ? data : (data ? [data] : [])
 }
 
-function getListens() {
-    const listens: Record<string | number, object> = {}
+function configServers() {
+    const servers = toArray(global_config.http.server)
+    global_config.http.server = {}
 
-    for (const server of toArray(global_config.http.server)) {
+    for (const server of servers) {
         for (const listen_cfg of toArray(server.listen)) {
             let addr = listen_cfg.split(' ')[0]
 
             if (Number.isInteger(+addr)) {
-                listens[addr] = {
-                    port: +addr,
-                    hostname: 'localhost',
-                }
+                server.port = +addr
+                server.hostname = 'localhost'
+                global_config.http.server[addr] = server
                 continue
             }
 
             const matches = addr.match(/(.+):(\d+)$/)
 
             if (matches)
-                listens[matches[2]] = {
-                    port: +matches[2],
-                    hostname: matches[1]
-                }
+                server.port = +matches[2]
+                server.hostname = matches[1]
+                global_config.http.server[matches[2]] = server
         }
     }
 
-    return listens
+    return global_config.http.server
 }
 
 function onWscOpen(wsc: WebSocket, callback: Function) {
@@ -123,38 +132,39 @@ function onWscOpen(wsc: WebSocket, callback: Function) {
     }, 10)
 }
 
-function startServer(listen_opts: object) {
+function startServer(server_cfg: object) {
+    server_cfg.locations = {}
+
     const server = Bun.serve({
-        ...listen_opts,
         reusePort: true,
+        port: server_cfg.port,
+        hostname: server_cfg.hostname,
         maxRequestBodySize: getClientMaxBodySize(global_config),
-        async fetch(req: Request, server: Server) {
+
+        async fetch(req: Request, server: Server, response: never) {
             const req_url = new URL(req.url)
+            const opts: HandlerOpts = { req, req_url, server, server_cfg }
 
-            for (const server_cfg of toArray(global_config.http.server)) {
-                for (const [directive, config] of Object.entries(server_cfg)) {
-                    //console.info({directive, actions})
-
-                    if (directive.startsWith('location ')) {
-                        const path_prefix = directive.slice(9)
-
-                        for (const handlers of toArray(config)) {
-                            for (const [handler, argument] of Object.entries(handlers)) {
-                                //console.info({action, argument})
-                                const response = await location_handlers[handler](argument, { path_prefix, req, req_url, server })
-
-                                if (response)
-                                    return response
-                                    // return console.info('end directive: location:', path_prefix) || response
-                            }
-                        }
-
-                        //console.warn('No handler for location:', path_prefix, req.url)
-                    }
+            for (const [path_prefix, actions] of Object.entries(server_cfg.locations || {})) {
+                if (req_url.pathname.startsWith(path_prefix)) {
+                    opts.path_prefix = path_prefix
+                    return runActions(actions as object[], opts)
                 }
             }
 
-            return new Response(Bun.file(global_config.http.server.root))
+            for (const [directive, config] of Object.entries(server_cfg)) {
+                //console.info({directive, actions})
+
+                if (directive.startsWith('location ')) {
+                    const actions = toArray(config)
+                    server_cfg.locations[opts.path_prefix = directive.slice(9)] = actions
+
+                    if (response = await runActions(actions, opts))
+                        return response
+
+                    console.warn('No handler for location:', opts.path_prefix, req.url)
+                }
+            }
         },
         websocket: {
             open(wss) {
@@ -189,11 +199,11 @@ function startServer(listen_opts: object) {
     console.info(`Server started on ${server.url}`)
 }
 
-const listens = Object.values(getListens())
+const servers = Object.values(configServers())
 
 for (let i=0; i < getMaxWorker(global_config); i++) {
-    for (const listen_opts of listens) {
-        startServer(listen_opts)
+    for (const config of servers) {
+        startServer(config)
     }
 }
 
