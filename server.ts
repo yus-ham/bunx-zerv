@@ -1,5 +1,6 @@
 import { watch } from "fs"
 import { BunFile, Server } from "bun"
+import { getClientMaxBodySize } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 const parser = new NginxConfigParser()
@@ -126,6 +127,7 @@ for (const listen_opts of Object.values(getListens())) {
     Bun.serve({
         ...listen_opts,
         reusePort: true,
+        maxRequestBodySize: getClientMaxBodySize(global_config),
         async fetch(req: Request, server: Server) {
             const req_url = new URL(req.url)
 
