@@ -40,3 +40,9 @@ export function getClientMaxBodySize(config: object) {
     const max = config.http.client_max_body_size
     return max ? parseHumanReadableBytes(max) : undefined
 }
+
+export function getMaxWorker(config: object) {
+    if (config.worker_processes === 'auto')
+        return navigator.hardwareConcurrency
+    return parseInt(config.worker_processes) || 0
+}

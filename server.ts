@@ -1,6 +1,6 @@
 import { watch } from "fs"
 import { BunFile, Server } from "bun"
-import { getClientMaxBodySize } from "./utils"
+import { getClientMaxBodySize, getMaxWorker } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 const parser = new NginxConfigParser()
@@ -123,8 +123,8 @@ function onWscOpen(wsc: WebSocket, callback: Function) {
     }, 10)
 }
 
-for (const listen_opts of Object.values(getListens())) {
-    Bun.serve({
+function startServer(listen_opts: object) {
+    const server = Bun.serve({
         ...listen_opts,
         reusePort: true,
         maxRequestBodySize: getClientMaxBodySize(global_config),
@@ -185,6 +185,16 @@ for (const listen_opts of Object.values(getListens())) {
                 return new Response(`Upstream error: ${e.message} ${e.path}`, { status: 500 })
         },
     })
+
+    console.info(`Server started on ${server.url}`)
 }
 
-console.info(`Child worker (${process.pid}) started`)
+const listens = Object.values(getListens())
+
+for (let i=0; i < getMaxWorker(global_config); i++) {
+    for (const listen_opts of listens) {
+        startServer(listen_opts)
+    }
+}
+
+// console.info(`Child worker (${process.pid}) started`)
