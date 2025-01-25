@@ -84,11 +84,12 @@ const location_handlers = {
     async proxy_cache_bypass() { },
 }
 
-async function runActions(actions: object[], opts = {}, response: never) {
-    for (const [action, argument] of Object.entries(actions)) {
-        // @ts-ignore
-        if (response = await location_handlers[action](argument, opts))
-            return response
+async function runActions(actions_cfg: object[], opts = {}, response: never) {
+    for (const actions of actions_cfg) {
+        for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
+            if (response = await location_handlers[action]?.(argument, opts))
+                return response
+        }
     }
 }
 
