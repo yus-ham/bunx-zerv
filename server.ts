@@ -28,7 +28,7 @@ type ActionOpts = {
     path_prefix: string;
 }
 
-const directive_actions = {
+const location_handlers = {
     async try_files(files: string, opts: ActionOpts) {
         for (const entry of files?.split(' ') || []) {
             const file_path = global_config.http.server.root + entry.replace('$uri', opts.req_url.pathname)
@@ -132,19 +132,21 @@ for (const listen_opts of Object.values(getListens())) {
             const req_url = new URL(req.url)
 
             for (const server_cfg of toArray(global_config.http.server)) {
-                for (const [directive, actions] of Object.entries(server_cfg)) {
+                for (const [directive, config] of Object.entries(server_cfg)) {
                     //console.info({directive, actions})
 
                     if (directive.startsWith('location ')) {
                         const path_prefix = directive.slice(9)
 
-                        for (const [action, argument] of Object.entries(actions!)) {
-                            //console.info({action, argument})
-                            const response = await directive_actions[action](argument, { path_prefix, req, req_url, server })
+                        for (const handlers of toArray(config)) {
+                            for (const [handler, argument] of Object.entries(handlers)) {
+                                //console.info({action, argument})
+                                const response = await location_handlers[handler](argument, { path_prefix, req, req_url, server })
 
-                            if (response)
-                                return response
-                            // return console.info('end directive: location:', path_prefix) || response
+                                if (response)
+                                    return response
+                                    // return console.info('end directive: location:', path_prefix) || response
+                            }
                         }
 
                         //console.warn('No handler for location:', path_prefix, req.url)
