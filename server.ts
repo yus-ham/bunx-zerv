@@ -1,10 +1,19 @@
 import { watch } from "fs"
+import { parseArgs } from "util"
 import { BunFile, Server } from "bun"
 import { getClientMaxBodySize, getMaxWorker } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
+import path from "path"
+
+
+const {values: argv} = parseArgs({
+    options: {
+        config: {type: 'string', short: 'c', default: 'config/nginx.conf'},
+    }
+})
 
 const parser = new NginxConfigParser()
-const loadConfig = () => parser.readConfigFile('config/nginx.conf', {
+const loadConfig = () => parser.readConfigFile(argv.config, {
     ignoreIncludeErrors: true,
     parseIncludes: true,
 })
@@ -12,7 +21,7 @@ const loadConfig = () => parser.readConfigFile('config/nginx.conf', {
 const global_config = loadConfig()
 global_config.cached = {}
 
-watch('config', { recursive: true })
+watch(path.dirname(argv.config!), { recursive: true })
     .on('change', (event, file_name) => {
         // console.info(event, file_name)
         Object.assign(global_config, loadConfig())
