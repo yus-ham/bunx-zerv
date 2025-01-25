@@ -1,7 +1,7 @@
 import { watch } from "fs"
 import { parseArgs } from "util"
 import { BunFile, Server } from "bun"
-import { getClientMaxBodySize, getMaxWorker } from "./utils"
+import { getClientMaxBodySize, getMaxWorker, toArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 import path from "path"
 
@@ -30,6 +30,7 @@ watch(path.dirname(argv.config!), { recursive: true })
 
 const HTTP_SWITCHING_PROTOCOLS = 101
 const HTTP_NOT_FOUND = 404
+const HTTP_OK = 200
 
 type HandlerOpts = {
     req: Request;
@@ -47,12 +48,12 @@ const location_handlers = {
             //console.info('try_files:', {entry, file_path})
 
             if (await file.exists())
-                return new Response(file, { status: 200 })
+                return new Response(file, { status: HTTP_OK })
 
             // console.info({file})
 
             if (entry === '=404')
-                return new Response(null, { status: 404 })
+                return new Response(null, { status: HTTP_NOT_FOUND })
         }
     },
 
@@ -102,13 +103,9 @@ async function runActions(actions_cfg: object[], opts = {}, response: never) {
     }
 }
 
-function toArray(data: any) {
-    return Array.isArray(data) ? data : (data ? [data] : [])
-}
-
-function configServers() {
-    const servers = toArray(global_config.http.server)
-    global_config.http.server = {}
+export function configServers(config: object) {
+    const servers = toArray(config.http.server)
+    config.http.server = {}
 
     for (const server of servers) {
         for (const listen_cfg of toArray(server.listen)) {
@@ -117,20 +114,21 @@ function configServers() {
             if (Number.isInteger(+addr)) {
                 server.port = +addr
                 server.hostname = 'localhost'
-                global_config.http.server[addr] = server
+                config.http.server[addr] = server
                 continue
             }
 
-            const matches = addr.match(/(.+):(\d+)$/)
+            const [,, hostname, port] = addr.replace('$PORT', Bun.env.PORT).match(/((.+):)?(\w+)$/)
 
-            if (matches)
-                server.port = +matches[2]
-                server.hostname = matches[1]
-                global_config.http.server[matches[2]] = server
+            if (port) {
+                server.port = +(port.replace('$PORT', Bun.env.PORT))
+                server.hostname = hostname ? hostname.replace('$HOSTNAME', Bun.env.HOSTNAME) : 'localhost';
+                config.http.server[server.port] = server
+            }
         }
     }
 
-    return global_config.http.server
+    return config.http.server
 }
 
 function onWscOpen(wsc: WebSocket, callback: Function) {
@@ -209,7 +207,7 @@ function startServer(server_cfg: object) {
     console.info(`Server started on ${server.url}`)
 }
 
-const servers = Object.values(configServers())
+const servers = Object.values(configServers(global_config))
 
 for (let i=0; i < getMaxWorker(global_config); i++) {
     for (const config of servers) {

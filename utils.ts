@@ -1,5 +1,9 @@
 const BYTE_UNITS = 'KMGTPEZY';
 
+export function toArray(data: any) {
+    return Array.isArray(data) ? data : (data ? [data] : [])
+}
+
 export function parseHumanReadableBytes(size_str: string) {
     if (!size_str.length)
         return
