@@ -121,6 +121,7 @@ export function refineConfig(config: object) {
             }
         }
 
+        server.root = server.root?.replaceAll('\\', '/')
         server.res_headers = removeToArray(server, 'add_header')
     }
 
