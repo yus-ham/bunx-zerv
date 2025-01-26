@@ -4,6 +4,12 @@ export function toArray(data: any) {
     return Array.isArray(data) ? data : (data ? [data] : [])
 }
 
+export function removeToArray(object: object, key: string) {
+    const result = toArray(object[key])
+    delete object[key]
+    return result
+}
+
 export function parseHumanReadableBytes(size_str: string) {
     if (!size_str.length)
         return

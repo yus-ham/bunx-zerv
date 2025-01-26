@@ -1,14 +1,14 @@
 import { watch } from "fs"
+import { dirname } from "path"
 import { parseArgs } from "util"
 import { BunFile, Server } from "bun"
-import { getClientMaxBodySize, getMaxWorker, toArray } from "./utils"
+import { getClientMaxBodySize, getMaxWorker, removeToArray, toArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
-import path from "path"
 
 
-const {values: argv} = parseArgs({
+const { values: argv } = parseArgs({
     options: {
-        config: {type: 'string', short: 'c', default: 'config/nginx.conf'},
+        config: { type: 'string', short: 'c', default: 'config/nginx.conf' },
     }
 })
 
@@ -21,12 +21,8 @@ const loadConfig = () => parser.readConfigFile(argv.config, {
 const global_config = loadConfig()
 global_config.cached = {}
 
-watch(path.dirname(argv.config!), { recursive: true })
-    .on('change', (event, file_name) => {
-        // console.info(event, file_name)
-        Object.assign(global_config, loadConfig())
-        // console.info('config reloaded')
-    })
+watch(dirname(argv.config!), { recursive: true })
+    .on('change', (event, file_name) => Object.assign(global_config, loadConfig()))
 
 const HTTP_SWITCHING_PROTOCOLS = 101
 const HTTP_NOT_FOUND = 404
@@ -45,12 +41,10 @@ const location_handlers = {
         for (const entry of files?.split(' ') || []) {
             const file_path = opts.server_cfg.root + entry.replace('$uri', opts.req_url.pathname)
             const file: BunFile = Bun.file(file_path)
-            //console.info('try_files:', {entry, file_path})
+            // console.info('try_files:', { entry, file_path })
 
             if (await file.exists())
                 return new Response(file, { status: HTTP_OK })
-
-            // console.info({file})
 
             if (entry === '=404')
                 return new Response(null, { status: HTTP_NOT_FOUND })
@@ -71,9 +65,7 @@ const location_handlers = {
 
         const data = { target_url }
         if (opts.server.upgrade(opts.req, { data })) {
-            //data.upstream_ws = new WebSocket(target_url)
-
-            console.info('101 HTTP_SWITCHING_PROTOCOLS', opts.req.url)
+            // console.info('101 HTTP_SWITCHING_PROTOCOLS', opts.req.url)
             return { status: HTTP_SWITCHING_PROTOCOLS } as Response
         }
 
@@ -85,7 +77,7 @@ const location_handlers = {
             body: await opts.req.arrayBuffer(),
         }
 
-        console.info('forward req')
+        // console.info('forward req')
         return fetch(target_url, req_init)
     },
 
@@ -94,27 +86,29 @@ const location_handlers = {
     async proxy_cache_bypass() { },
 }
 
-async function runActions(actions_cfg: object[], opts = {}, response: never) {
-    for (const actions of actions_cfg) {
-        for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
-            if (response = await location_handlers[action]?.(argument, opts))
-                return response
+async function runActions(actions: object, opts = {}, response: never) {
+    for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
+        if (response = await location_handlers[action]?.(argument, opts)) {
+            setResponseHeaders(response, global_config.http.res_headers)
+            setResponseHeaders(response, opts.server_cfg.res_headers)
+            setResponseHeaders(response, actions.res_headers)
+            return response
         }
     }
 }
 
-export function configServers(config: object) {
-    const servers = toArray(config.http.server)
-    config.http.server = {}
+export function refineConfig(config: object) {
+    config.http.servers = {}
+    config.http.res_headers = removeToArray(config.http, 'add_header')
 
-    for (const server of servers) {
+    for (const server of removeToArray(config.http, 'server')) {
         for (const listen_cfg of toArray(server.listen)) {
             let addr = listen_cfg.split(' ')[0]
 
             if (Number.isInteger(+addr)) {
                 server.port = +addr
-                server.hostname = 'localhost'
-                config.http.server[addr] = server
+                server.hostname = 'localhost';
+                config.http.servers[addr] = server
                 continue
             }
 
@@ -123,12 +117,21 @@ export function configServers(config: object) {
             if (port) {
                 server.port = +(port.replace('$PORT', Bun.env.PORT))
                 server.hostname = hostname ? hostname.replace('$HOSTNAME', Bun.env.HOSTNAME) : 'localhost';
-                config.http.server[server.port] = server
+                config.http.servers[server.port] = server
             }
         }
+
+        server.res_headers = removeToArray(server, 'add_header')
     }
 
-    return config.http.server
+    return config.http.servers
+}
+
+function setResponseHeaders(response: Response, headers: string[]) {
+    for (const header of headers) {
+        const [name, value] = header.split(' ')
+        response.headers.set(name, value)
+    }
 }
 
 function onWscOpen(wsc: WebSocket, callback: Function) {
@@ -141,7 +144,7 @@ function onWscOpen(wsc: WebSocket, callback: Function) {
 }
 
 function startServer(server_cfg: object) {
-    server_cfg.locations = {}
+    server_cfg.location_actions = {}
 
     const server = Bun.serve({
         reusePort: true,
@@ -153,10 +156,10 @@ function startServer(server_cfg: object) {
             const req_url = new URL(req.url)
             const opts: HandlerOpts = { req, req_url, server, server_cfg }
 
-            for (const [path_prefix, actions] of Object.entries(server_cfg.locations || {})) {
+            for (const [path_prefix, actions] of Object.entries(server_cfg.location_actions || {})) {
                 if (req_url.pathname.startsWith(path_prefix)) {
                     opts.path_prefix = path_prefix
-                    return runActions(actions as object[], opts)
+                    return runActions(actions, opts)
                 }
             }
 
@@ -164,16 +167,26 @@ function startServer(server_cfg: object) {
                 //console.info({directive, actions})
 
                 if (directive.startsWith('location ')) {
-                    const actions = toArray(config)
-                    server_cfg.locations[opts.path_prefix = directive.slice(9)] = actions
+                    const location_actions = {}
+                    const actions_cfg = toArray(config)
 
-                    if (response = await runActions(actions, opts))
+                    server_cfg.location_actions[opts.path_prefix = directive.slice(9)] = location_actions
+                    location_actions.res_headers = []
+
+                    for (const actions of actions_cfg) {
+                        //console.info({actions})
+                        location_actions.res_headers.push(...removeToArray(actions, 'add_header'))
+                        Object.assign(location_actions, actions)
+                    }
+
+                    if (response = await runActions(location_actions, opts))
                         return response
-
-                    console.warn('No handler for location:', opts.path_prefix, req.url)
                 }
             }
+
+            console.warn('No handler matched for url:', req.url)
         },
+
         websocket: {
             open(wss) {
                 wss.upstream_wsc = new WebSocket(wss.data.target_url)
@@ -207,9 +220,9 @@ function startServer(server_cfg: object) {
     console.info(`Server started on ${server.url}`)
 }
 
-const servers = Object.values(configServers(global_config))
+const servers = Object.values(refineConfig(global_config))
 
-for (let i=0; i < getMaxWorker(global_config); i++) {
+for (let i = 0; i < getMaxWorker(global_config); i++) {
     for (const config of servers) {
         startServer(config)
     }
