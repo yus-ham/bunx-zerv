@@ -129,7 +129,7 @@ export function refineConfig(config: object) {
 }
 
 function setResponseHeaders(response: Response, headers: string[]) {
-    for (const header of headers) {
+    for (const header of headers || []) {
         const [name, value] = header.split(' ')
         response.headers.set(name, value)
     }
