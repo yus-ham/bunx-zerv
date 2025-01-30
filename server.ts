@@ -130,8 +130,11 @@ export function refineConfig(config: object) {
 
 function setResponseHeaders(response: Response, headers: string[]) {
     for (const header of headers || []) {
-        const [name, value] = header.split(' ')
-        response.headers.set(name, value)
+        const space_pos = header.indexOf(' ')
+        response.headers.set(
+            header.slice(0, space_pos),
+            header.slice(space_pos + 1).replace(/^["']|["']$/g, ''),
+        )
     }
 }
 
