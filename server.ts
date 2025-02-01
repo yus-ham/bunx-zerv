@@ -40,7 +40,7 @@ function run() {
     const argv = parseCLIArgs()
 
     if (argv?.help) {
-        return console.info('Usage: bunx bungw [-c, --config <file>] [-l, --listen <[hostname:]port>] [-r, --root <directory>] [--spa]')
+        return console.info('Usage: bunx zerv [-c, --config <file>] [-l, --listen <[hostname:]port>] [-r, --root <directory>] [--spa]')
     }
 
     if (argv) {

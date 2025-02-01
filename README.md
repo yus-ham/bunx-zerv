@@ -1,4 +1,4 @@
-# Bun Gateway
+# Zerv
 Bun HTTP server with Nginx style configurations
 
 # Usage
