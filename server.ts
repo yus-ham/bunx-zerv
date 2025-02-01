@@ -4,6 +4,7 @@ import { watch } from "fs"
 import { dirname } from "path"
 import { parseArgs } from "util"
 import { BunFile, Server } from "bun"
+import { networkInterfaces } from "os"
 import { getClientMaxBodySize, getMaxWorker, removeToArray, toArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
@@ -291,7 +292,25 @@ function startServer(server_cfg: object) {
         },
     })
 
-    console.info(`Server started on ${server.url}`)
+    console.info(`Server started on ${getServerAddress(server_cfg, server)}`)
+}
+
+function getServerAddress(config, server) {
+    if (config.address)
+        return config.address
+
+    if (config.hostname)
+        return config.address = server.url
+
+    const nets = networkInterfaces()
+
+    for (const interfaces of Object.values(nets)) {
+        for (const net_interface of interfaces) {
+            if (net_interface.address.startsWith('192.168')) {
+                return config.address = `${server.protocol}://${net_interface.address}:${server.port}/`;
+            }
+        }
+    }
 }
 
 // console.info(`Child worker (${process.pid}) started`)
