@@ -18,14 +18,13 @@ const global_config = {}
 function parseCLIArgs() {
     try {
         return parseArgs({
+            allowPositionals: true,
             options: {
                 help: { type: 'boolean', short: 'h' },
                 config: { type: 'string', short: 'c', default: 'config/main/default.conf' },
-                root: { type: 'string', short: 'r' },
-                listen: { type: 'string', short: 'l' },
                 spa: { type: 'boolean' },
-            }
-        }).values
+            },
+        })
     } catch(err) {
         if (err.message.startsWith('Unexpected argument'))
             return console.error(err.message.slice(0, err.message.indexOf("'. ") + 1))
@@ -37,11 +36,10 @@ function parseCLIArgs() {
 }
 
 function run() {
-    const argv = parseCLIArgs()
+    const { values: argv, positionals } = parseCLIArgs()
 
-    if (argv?.help) {
-        return console.info('Usage: bunx zerv [-c, --config <file>] [-l, --listen <[hostname:]port>] [-r, --root <directory>] [--spa]')
-    }
+    if (argv?.help)
+        return console.info('Usage: zerv [[hostname:]port] [directory] [--spa] [-c, --config <file>]')
 
     if (argv) {
         const parser = new NginxConfigParser()
@@ -51,7 +49,7 @@ function run() {
         watch(dirname(dirname(argv.config!)), { recursive: true })
             .on('change', () => loadConfig(parser, argv.config))
 
-        const servers = Object.values(refineConfig(argv))
+        const servers = Object.values(refineConfig(argv, positionals))
 
         if (!servers.length)
             servers.push(getDefaultServer({spa: false}))
@@ -149,7 +147,7 @@ async function runActions(actions: object, opts = {}, response: never) {
     }
 }
 
-function refineConfig(argv) {
+function refineConfig(argv, [listen, root]) {
     global_config.http.servers = {}
     global_config.http.res_headers = removeToArray(global_config.http, 'add_header')
 
@@ -159,8 +157,14 @@ function refineConfig(argv) {
         value: {},
     })
 
-    if (argv.listen) {
-        const [,, hostname, port] = argv.listen.match(LISTEN_ADDR_RE)
+    if (listen) {
+        const [,, hostname, port] = listen.match(LISTEN_ADDR_RE) || []
+
+        if (root)
+            argv.root = root
+        else if (!port)
+            argv.root = listen
+
         return global_config.http.servers = { [port]: getDefaultServer(argv, hostname, port) }
     }
 

@@ -20,8 +20,8 @@
 # Default server configuration
 #
 server {
-	listen 8000 default_server;
-	listen [::]:8000 default_server;
+	listen 3000 default_server;
+	listen [::]:3000 default_server;
 
 	# SSL configuration
 	#

@@ -2,4 +2,4 @@
 Bun HTTP server with Nginx style configurations
 
 # Usage
-`bun server.ts`
+`bunx zerv [[hostname:]port] [directory] [--spa] [-c, --config <file>]`
