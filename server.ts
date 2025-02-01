@@ -20,7 +20,7 @@ function parseCLIArgs() {
         return parseArgs({
             options: {
                 help: { type: 'boolean', short: 'h' },
-                config: { type: 'string', short: 'c', default: 'config/nginx.conf' },
+                config: { type: 'string', short: 'c', default: 'config/main/default.conf' },
                 root: { type: 'string', short: 'r' },
                 listen: { type: 'string', short: 'l' },
                 spa: { type: 'boolean' },
@@ -48,7 +48,7 @@ function run() {
 
         loadConfig(parser, argv.config)
 
-        watch(dirname(argv.config!), { recursive: true })
+        watch(dirname(dirname(argv.config!)), { recursive: true })
             .on('change', () => loadConfig(parser, argv.config))
 
         const servers = Object.values(refineConfig(argv))

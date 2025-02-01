@@ -1,0 +1,6 @@
+node_modules/
+config/main/*
+config/sites-available/*
+!config/main/default.conf
+!config/sites-available/default
+!config/main/default.conf
