@@ -1,3 +1,5 @@
+#!/bin/env bun
+
 import { watch } from "fs"
 import { dirname } from "path"
 import { parseArgs } from "util"
@@ -6,27 +8,73 @@ import { getClientMaxBodySize, getMaxWorker, removeToArray, toArray } from "./ut
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 
-const { values: argv } = parseArgs({
-    options: {
-        config: { type: 'string', short: 'c', default: 'config/nginx.conf' },
-    }
-})
-
-const parser = new NginxConfigParser()
-const loadConfig = () => parser.readConfigFile(argv.config, {
-    ignoreIncludeErrors: true,
-    parseIncludes: true,
-})
-
-const global_config = loadConfig()
-global_config.cached = {}
-
-watch(dirname(argv.config!), { recursive: true })
-    .on('change', (event, file_name) => Object.assign(global_config, loadConfig()))
-
 const HTTP_SWITCHING_PROTOCOLS = 101
 const HTTP_NOT_FOUND = 404
 const HTTP_OK = 200
+const LISTEN_ADDR_RE = /((.+):)?(\d+)$/
+const global_config = {}
+
+function parseCLIArgs() {
+    try {
+        return parseArgs({
+            options: {
+                help: { type: 'boolean', short: 'h' },
+                config: { type: 'string', short: 'c', default: 'config/nginx.conf' },
+                root: { type: 'string', short: 'r' },
+                listen: { type: 'string', short: 'l' },
+                spa: { type: 'boolean' },
+            }
+        }).values
+    } catch(err) {
+        if (err.message.startsWith('Unexpected argument'))
+            return console.error(err.message.slice(0, err.message.indexOf("'. ") + 1))
+        let matches
+        if (matches = err.message.match(/Option '(-\w)[\s\S]+To specify an option[\s\S]+use '(--[\w]+)/))
+            return console.error(`Option '${matches[1]}, ${matches[2]} <value>' argument missing`)
+        return console.error(err.message)
+    }
+}
+
+function run() {
+    const argv = parseCLIArgs()
+
+    if (argv?.help) {
+        return console.info('Usage: bunx bungw [-c, --config <file>] [-l, --listen <[hostname:]port>] [-r, --root <directory>] [--spa]')
+    }
+
+    if (argv) {
+        const parser = new NginxConfigParser()
+
+        loadConfig(parser, argv.config)
+
+        watch(dirname(argv.config!), { recursive: true })
+            .on('change', () => loadConfig(parser, argv.config))
+
+        const servers = Object.values(refineConfig(argv))
+
+        for (let i = 0; i < getMaxWorker(global_config); i++) {
+            for (const config of servers) {
+                startServer(config)
+            }
+        }
+    }
+}
+
+try {
+    run()
+} catch(err) {
+    console.error(err.code)
+    console.error(err.stack)
+}
+
+function loadConfig(parser, file: string) {
+    const config = parser.readConfigFile(file, {
+        ignoreIncludeErrors: true,
+        parseIncludes: true,
+    })
+
+    Object.assign(global_config, config)
+}
 
 type HandlerOpts = {
     req: Request;
@@ -97,35 +145,57 @@ async function runActions(actions: object, opts = {}, response: never) {
     }
 }
 
-export function refineConfig(config: object) {
-    config.http.servers = {}
-    config.http.res_headers = removeToArray(config.http, 'add_header')
+function refineConfig(argv) {
+    global_config.http.servers = {}
+    global_config.http.res_headers = removeToArray(global_config.http, 'add_header')
 
-    for (const server of removeToArray(config.http, 'server')) {
+    Object.defineProperty(global_config, 'cached', {
+        enumerable: false,
+        writable: false,
+        value: {},
+    })
+
+    if (argv.listen) {
+        const [,, hostname, port] = argv.listen.match(LISTEN_ADDR_RE)
+        return global_config.http.servers = {
+            [port]: {
+                port,
+                hostname,
+                root: (argv.root || process.cwd()).replaceAll('\\', '/'),
+                location_actions: {
+                    '/': [{
+                        try_files: '$uri $uri/ ' + (argv.spa ? '/index.html' : '=404')
+                    }]
+                }
+            }
+        }
+    }
+
+    for (const server of removeToArray(global_config.http, 'server')) {
         for (const listen_cfg of toArray(server.listen)) {
             let addr = listen_cfg.split(' ')[0]
 
             if (Number.isInteger(+addr)) {
                 server.port = +addr
-                server.hostname = 'localhost';
-                config.http.servers[addr] = server
+                global_config.http.servers[addr] = server
                 continue
             }
 
-            const [,, hostname, port] = addr.replace('$PORT', Bun.env.PORT).match(/((.+):)?(\w+)$/)
+            const [,, hostname, port] = addr
+                .replace('$PORT', Bun.env.PORT)
+                .replace('$HOSTNAME', Bun.env.HOSTNAME)
+                .match(LISTEN_ADDR_RE)
 
-            if (port) {
-                server.port = +(port.replace('$PORT', Bun.env.PORT))
-                server.hostname = hostname ? hostname.replace('$HOSTNAME', Bun.env.HOSTNAME) : 'localhost';
-                config.http.servers[server.port] = server
-            }
+            server.port = port
+            server.hostname = hostname
+            global_config.http.servers[server.port] = server
         }
 
         server.root = server.root?.replaceAll('\\', '/')
         server.res_headers = removeToArray(server, 'add_header')
     }
 
-    return config.http.servers
+    return global_config.http.servers
 }
 
 function setResponseHeaders(response: Response, headers: string[]) {
@@ -148,7 +218,7 @@ function onWscOpen(wsc: WebSocket, callback: Function) {
 }
 
 function startServer(server_cfg: object) {
-    server_cfg.location_actions = {}
+    server_cfg.location_actions ||= {}
 
     const server = Bun.serve({
         reusePort: true,
@@ -160,7 +230,7 @@ function startServer(server_cfg: object) {
             const req_url = new URL(req.url)
             const opts: HandlerOpts = { req, req_url, server, server_cfg }
 
-            for (const [path_prefix, actions] of Object.entries(server_cfg.location_actions || {})) {
+            for (const [path_prefix, actions] of Object.entries(server_cfg.location_actions)) {
                 if (req_url.pathname.startsWith(path_prefix)) {
                     opts.path_prefix = path_prefix
                     return runActions(actions, opts)
@@ -222,14 +292,6 @@ function startServer(server_cfg: object) {
     })
 
     console.info(`Server started on ${server.url}`)
-}
-
-const servers = Object.values(refineConfig(global_config))
-
-for (let i = 0; i < getMaxWorker(global_config); i++) {
-    for (const config of servers) {
-        startServer(config)
-    }
 }
 
 // console.info(`Child worker (${process.pid}) started`)

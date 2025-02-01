@@ -1,0 +1,7 @@
+{
+  "name": "bun-gateway",
+  "version": "1.0.0",
+  "bin": {
+    "bungw": "server.ts"
+  }
+}
