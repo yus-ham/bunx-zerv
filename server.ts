@@ -53,6 +53,9 @@ function run() {
 
         const servers = Object.values(refineConfig(argv))
 
+        if (!servers.length)
+            servers.push(getDefaultServer({spa: false}))
+
         for (let i = 0; i < getMaxWorker(global_config); i++) {
             for (const config of servers) {
                 startServer(config)
@@ -158,18 +161,7 @@ function refineConfig(argv) {
 
     if (argv.listen) {
         const [,, hostname, port] = argv.listen.match(LISTEN_ADDR_RE)
-        return global_config.http.servers = {
-            [port]: {
-                port,
-                hostname,
-                root: (argv.root || process.cwd()).replaceAll('\\', '/'),
-                location_actions: {
-                    '/': [{
-                        try_files: '$uri $uri/ ' + (argv.spa ? '/index.html' : '=404')
-                    }]
-                }
-            }
-        }
+        return global_config.http.servers = { [port]: getDefaultServer(argv, hostname, port) }
     }
 
     for (const server of removeToArray(global_config.http, 'server')) {
@@ -197,6 +189,19 @@ function refineConfig(argv) {
     }
 
     return global_config.http.servers
+}
+
+function getDefaultServer(argv: object, hostname?: string, port?: number) {
+    return {
+        port,
+        hostname,
+        root: (argv.root || process.cwd()).replaceAll('\\', '/'),
+        location_actions: {
+            '/': [{
+                try_files: '$uri $uri/ ' + (argv.spa ? '/index.html' : '=404')
+            }]
+        }
+    }
 }
 
 function setResponseHeaders(response: Response, headers: string[]) {
