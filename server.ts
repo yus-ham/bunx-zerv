@@ -39,7 +39,16 @@ export default async function run() {
     const { values: argv, positionals } = parseCLIArgs()
 
     if (argv?.help) {
-        return console.info('Usage: zerv [[hostname:]port] [directory] [--spa] [-c, --config <file>] [-s, --save]')
+        console.info(`${styleText('yellow', 'Usage:')}\n  zerv [[hostname:]port] [directory] [options]\n`)
+        console.info(styleText('yellow', 'Arguments:'))
+        console.info(`  ${styleText('green', 'hostname')}       Host name to be listen on, defaults to ${styleText('green', '0.0.0.0')}`)
+        console.info(`  ${styleText('green', 'port')}           Port to be listen on, defaults to ${styleText('green', '3000')}`)
+        console.info(`  ${styleText('green', 'directory')}      Root directory to be served at, defaults to current working directory`)
+        console.info(styleText('yellow', '\nOptions:'))
+        console.info(`  ${styleText('green', '--spa')}                  Enable SPA mode`)
+        console.info(`  ${styleText('green', '-c, --config <file>')}    Use config file`)
+        console.info(`  ${styleText('green', '-s, --save')}             Clone default config and save into config file if does not exist`)
+        return console.info('')
     }
 
     if (argv) {
