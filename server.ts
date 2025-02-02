@@ -1,9 +1,9 @@
 import { watch } from "fs"
 import { dirname, join } from "path"
 import { networkInterfaces } from "os"
-import { serve, Server, file } from "bun"
 import { parseArgs, styleText } from "util"
-import { getClientMaxBodySize, getMaxWorker, removeToArray, toArray } from "./utils"
+import { serve, Server, file, write, $ } from "bun"
+import { getClientMaxBodySize, getMaxWorker, toArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 
@@ -11,6 +11,7 @@ const HTTP_SWITCHING_PROTOCOLS = 101
 const HTTP_NOT_FOUND = 404
 const HTTP_OK = 200
 const LISTEN_ADDR_RE = /((.+):)?(\d+)$/
+const DEFAULT_CONFIG_FILE = 'config/main/default.conf'
 const global_config = {}
 
 function parseCLIArgs() {
@@ -19,7 +20,8 @@ function parseCLIArgs() {
             allowPositionals: true,
             options: {
                 help: { type: 'boolean', short: 'h' },
-                config: { type: 'string', short: 'c', default: 'config/main/default.conf' },
+                config: { type: 'string', short: 'c', default: DEFAULT_CONFIG_FILE },
+                save: { type: 'boolean', short: 's' },
                 spa: { type: 'boolean' },
             },
         })
@@ -36,44 +38,44 @@ function parseCLIArgs() {
 export default async function run() {
     const { values: argv, positionals } = parseCLIArgs()
 
-    if (argv?.help)
-        return console.info('Usage: zerv [[hostname:]port] [directory] [--spa] [-c, --config <file>]')
+    if (argv?.help) {
+        return console.info('Usage: zerv [[hostname:]port] [directory] [--spa] [-c, --config <file>] [-s, --save]')
+    }
 
     if (argv) {
+        let config_file = argv.config
         const parser = new NginxConfigParser()
 
-        if (!await file(argv.config).exists())
-            argv.config = join(import.meta.dirname, argv.config)
+        if (!await file(config_file).exists())
+            config_file = join(import.meta.dirname, DEFAULT_CONFIG_FILE)
 
-        loadConfig(parser, argv.config)
+        loadConfig(parser, config_file)
 
-        watch(dirname(dirname(argv.config!)), { recursive: true })
-            .on('change', () => loadConfig(parser, argv.config))
+        if (Bun.env.BUN_ENV === 'development' && config_file === DEFAULT_CONFIG_FILE)
+            watch('config', { recursive: true }).on('change', () => loadConfig(parser, config_file))
 
-        const servers = Object.values(refineConfig(argv, positionals))
+        ensureServers(argv, positionals)
 
-        if (!servers.length)
-            servers.push(getDefaultServer({spa: false}))
-
-        for (let config, i = 1, max = getMaxWorker(global_config); i <= max; i++) {
-            for (config of servers) {
-                startServer(config as object)
+        if (argv.save && !await file(argv.config).exists()) {
+            const cloned = structuredClone(global_config)
+            
+            for (const server of cloned.http.server) {
+                delete server.port
+                delete server.address
+                delete server.hostname
+                delete server.location_actions
             }
 
-            if (i === max) {
-                let out = `Server started on ${config.hostname}:${config.port} with ${max} workers`;
-                out += `\n    - Local     : http://127.0.0.1:${config.port}/`;
-
-                if (config.hostname === '0.0.0.0')
-                    out += `\n    - Network   : ${config.address}`;
-
-                console.info(styleText('green', out))
-            }
+            await $`mkdir -p ${dirname(argv.config)}`;
+            await write(argv.config, parser.toConf(cloned))
         }
+
+        Bun.gc(true)
+        startServers()
     }
 }
 
-function loadConfig(parser, file: string) {
+function loadConfig(parser: NginxConfigParser, file: string) {
     const config = parser.readConfigFile(file, {
         ignoreIncludeErrors: true,
         parseIncludes: true,
@@ -153,17 +155,16 @@ const location_handlers = {
 async function runActions(actions: object, opts = {}, response: never) {
     for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
         if (response = await location_handlers[action]?.(argument, opts)) {
-            setResponseHeaders(response, global_config.http.res_headers)
-            setResponseHeaders(response, opts.server_cfg.res_headers)
-            setResponseHeaders(response, actions.res_headers)
+            setResponseHeaders(response, global_config.http.add_header)
+            setResponseHeaders(response, opts.server_cfg.add_header)
+            setResponseHeaders(response, actions.add_header)
             return response
         }
     }
 }
 
-function refineConfig(argv, [listen, root]) {
-    global_config.http.servers = {}
-    global_config.http.res_headers = removeToArray(global_config.http, 'add_header')
+function ensureServers(argv, [listen, root]) {
+    global_config.http.add_header = toArray(global_config.http.add_header)
 
     Object.defineProperty(global_config, 'cached', {
         enumerable: false,
@@ -179,16 +180,18 @@ function refineConfig(argv, [listen, root]) {
         else if (!port)
             argv.root = listen
 
-        return global_config.http.servers = { [port]: getDefaultServer(argv, hostname, port) }
+        return global_config.http.server = [ getDefaultServer(argv, hostname, port) ]
     }
 
-    for (const server of removeToArray(global_config.http, 'server')) {
+    const servers: Record<string, object> = {}
+
+    for (const server of toArray(global_config.http.server)) {
         for (const listen_cfg of toArray(server.listen)) {
             let addr = listen_cfg.split(' ')[0]
 
             if (Number.isInteger(+addr)) {
                 server.port = +addr
-                global_config.http.servers[addr] = server
+                servers[addr] = server
                 continue
             }
 
@@ -199,15 +202,18 @@ function refineConfig(argv, [listen, root]) {
 
             server.port = port
             server.hostname = hostname
-            global_config.http.servers[server.port] = server
+            servers[server.port] = server
         }
 
         server.root = server.root?.replaceAll('\\', '/')
-        server.res_headers = removeToArray(server, 'add_header')
+        server.add_header = toArray(server.add_header)
         server.index = server.index.split(' ')
     }
 
-    return global_config.http.servers
+    global_config.http.server = Object.values(servers)
+
+    if (!global_config.http.server.length)
+        global_config.http.server.push(getDefaultServer({spa: false}))
 }
 
 function getDefaultServer(argv: object, hostname?: string, port?: number) {
@@ -239,6 +245,26 @@ function onWscOpen(wsc: WebSocket, callback: Function) {
     }, 10)
 }
 
+function startServers(config?: any) {
+    const workers_num = getMaxWorker(global_config)
+
+    for (let i = 1; i <= workers_num; i++) {
+        for (config of global_config.http.server) {
+            startServer(config as object)
+        }
+
+        if (i === workers_num) {
+            let out = `Server started on ${config.hostname}:${config.port} with ${workers_num} workers`;
+            out += `\n    - Local     : http://127.0.0.1:${config.port}/`;
+
+            if (config.hostname === '0.0.0.0')
+                out += `\n    - Network   : ${config.address}`;
+
+            console.info(styleText('green', out))
+        }
+    }
+}
+
 function startServer(server_cfg: object) {
     server_cfg.location_actions ||= {}
 
@@ -267,11 +293,10 @@ function startServer(server_cfg: object) {
                     const actions_cfg = toArray(config)
 
                     server_cfg.location_actions[opts.path_prefix = directive.slice(9)] = location_actions
-                    location_actions.res_headers = []
+                    location_actions.add_header = []
 
                     for (const actions of actions_cfg) {
-                        //console.info({actions})
-                        location_actions.res_headers.push(...removeToArray(actions, 'add_header'))
+                        location_actions.add_header.push(...toArray(actions.add_header))
                         Object.assign(location_actions, actions)
                     }
 
