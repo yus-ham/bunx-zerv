@@ -1,10 +1,10 @@
 #!/bin/env bun
 
 import { watch } from "fs"
-import { dirname } from "path"
 import { parseArgs } from "util"
-import { BunFile, Server } from "bun"
+import { dirname, join } from "path"
 import { networkInterfaces } from "os"
+import { BunFile, Server, file } from "bun"
 import { getClientMaxBodySize, getMaxWorker, removeToArray, toArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
@@ -35,7 +35,7 @@ function parseCLIArgs() {
     }
 }
 
-function run() {
+async function run() {
     const { values: argv, positionals } = parseCLIArgs()
 
     if (argv?.help)
@@ -43,6 +43,9 @@ function run() {
 
     if (argv) {
         const parser = new NginxConfigParser()
+
+        if (!await file(argv.config).exists())
+            argv.config = join(import.meta.dirname, argv.config)
 
         loadConfig(parser, argv.config)
 
@@ -63,9 +66,8 @@ function run() {
 }
 
 try {
-    run()
+    await run()
 } catch(err) {
-    console.error(err.code)
     console.error(err.stack)
 }
 
@@ -90,11 +92,11 @@ const location_handlers = {
     async try_files(files: string, opts: HandlerOpts) {
         for (const entry of files?.split(' ') || []) {
             const file_path = opts.server_cfg.root + entry.replace('$uri', opts.req_url.pathname)
-            const file: BunFile = Bun.file(file_path)
+            const file_ref: BunFile = file(file_path)
             // console.info('try_files:', { entry, file_path })
 
-            if (await file.exists())
-                return new Response(file, { status: HTTP_OK })
+            if (await file_ref.exists())
+                return new Response(file_ref, { status: HTTP_OK })
 
             if (entry === '=404')
                 return new Response(null, { status: HTTP_NOT_FOUND })
