@@ -1,9 +1,9 @@
 #!/bin/env bun
 
 import { watch } from "fs"
-import { parseArgs } from "util"
 import { dirname, join } from "path"
 import { networkInterfaces } from "os"
+import { parseArgs, styleText } from "util"
 import { BunFile, Server, file } from "bun"
 import { getClientMaxBodySize, getMaxWorker, removeToArray, toArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
@@ -57,9 +57,19 @@ async function run() {
         if (!servers.length)
             servers.push(getDefaultServer({spa: false}))
 
-        for (let i = 0; i < getMaxWorker(global_config); i++) {
-            for (const config of servers) {
-                startServer(config)
+        for (let config, i = 1, max = getMaxWorker(global_config); i <= max; i++) {
+            for (config of servers) {
+                startServer(config as object)
+            }
+
+            if (i === max) {
+                let out = `Server started on ${config.hostname}:${config.port} with ${max} workers`;
+                out += `\n    - Local     : http://127.0.0.1:${config.port}/`;
+
+                if (config.hostname === '0.0.0.0')
+                    out += `\n    - Network   : ${config.address}`;
+
+                console.info(styleText('green', out))
             }
         }
     }
@@ -111,7 +121,6 @@ const location_handlers = {
         //console.info('proxy_pass:', {altered_target_url: target_url})
 
         if (opts.path_prefix && !opts.req_url.pathname.startsWith(opts.path_prefix)) {
-            //console.info(`proxy_pass skipped, rule doesn't match`)
             return
         }
 
@@ -303,16 +312,19 @@ function startServer(server_cfg: object) {
         },
     })
 
-    console.info(`Server started on ${getServerAddress(server_cfg, server)}`)
+    setServerAddress(server_cfg, server)
 }
 
-function getServerAddress(config, server) {
+function setServerAddress(config: object, server: Server) {
+    config.port ||= server.port;
+
     if (config.address)
         return config.address
 
     if (config.hostname)
         return config.address = server.url
 
+    config.hostname = '0.0.0.0';
     const nets = networkInterfaces()
 
     for (const interfaces of Object.values(nets)) {
@@ -323,5 +335,3 @@ function getServerAddress(config, server) {
         }
     }
 }
-
-// console.info(`Child worker (${process.pid}) started`)
