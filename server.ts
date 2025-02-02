@@ -1,5 +1,3 @@
-#!/bin/env bun
-
 import { watch } from "fs"
 import { dirname, join } from "path"
 import { networkInterfaces } from "os"
@@ -35,7 +33,7 @@ function parseCLIArgs() {
     }
 }
 
-async function run() {
+export default async function run() {
     const { values: argv, positionals } = parseCLIArgs()
 
     if (argv?.help)
@@ -73,12 +71,6 @@ async function run() {
             }
         }
     }
-}
-
-try {
-    await run()
-} catch(err) {
-    console.error(err.stack)
 }
 
 function loadConfig(parser, file: string) {
