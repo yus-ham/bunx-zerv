@@ -3,8 +3,8 @@
 import { watch } from "fs"
 import { dirname, join } from "path"
 import { networkInterfaces } from "os"
+import { serve, Server, file } from "bun"
 import { parseArgs, styleText } from "util"
-import { BunFile, Server, file } from "bun"
 import { getClientMaxBodySize, getMaxWorker, removeToArray, toArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
@@ -101,15 +101,26 @@ type HandlerOpts = {
 const location_handlers = {
     async try_files(files: string, opts: HandlerOpts) {
         for (const entry of files?.split(' ') || []) {
-            const file_path = opts.server_cfg.root + entry.replace('$uri', opts.req_url.pathname)
-            const file_ref: BunFile = file(file_path)
-            // console.info('try_files:', { entry, file_path })
-
-            if (await file_ref.exists())
-                return new Response(file_ref, { status: HTTP_OK })
+            // console.info('try_files:', entry)
 
             if (entry === '=404')
                 return new Response(null, { status: HTTP_NOT_FOUND })
+
+            const file_path = opts.server_cfg.root + entry.replace('$uri', opts.req_url.pathname)
+
+            if (entry.endsWith('/')) {
+                for (const index of opts.server_cfg.index) {
+                    const file_ref = file(file_path + index)
+                    if (await file_ref.exists())
+                        return new Response(file_ref, { status: HTTP_OK })
+                }
+                continue
+            }
+
+            const file_ref = file(file_path)
+
+            if (await file_ref.exists())
+                return new Response(file_ref, { status: HTTP_OK })
         }
     },
 
@@ -201,6 +212,7 @@ function refineConfig(argv, [listen, root]) {
 
         server.root = server.root?.replaceAll('\\', '/')
         server.res_headers = removeToArray(server, 'add_header')
+        server.index = server.index.split(' ')
     }
 
     return global_config.http.servers
@@ -210,12 +222,9 @@ function getDefaultServer(argv: object, hostname?: string, port?: number) {
     return {
         port,
         hostname,
+        index: ['index.html'],
         root: (argv.root || process.cwd()).replaceAll('\\', '/'),
-        location_actions: {
-            '/': [{
-                try_files: '$uri $uri/ ' + (argv.spa ? '/index.html' : '=404')
-            }]
-        }
+        'location /': { try_files: '$uri $uri/ ' + (argv.spa ? '/index.html' : '=404') },
     }
 }
 
@@ -241,7 +250,7 @@ function onWscOpen(wsc: WebSocket, callback: Function) {
 function startServer(server_cfg: object) {
     server_cfg.location_actions ||= {}
 
-    const server = Bun.serve({
+    const server = serve({
         reusePort: true,
         port: server_cfg.port,
         hostname: server_cfg.hostname,

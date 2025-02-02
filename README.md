@@ -15,6 +15,6 @@ hostname        defaults to '0.0.0.0'
 port            defaults to '3000'
 directory       defaults to current working directory
 --spa           enable SPA mode
--c, --config    defaults to 'config/main/default' or can be found exactly at `$HOME/.bun/install/cache/bunx-zerv/config/main/default`
+-c, --config    defaults to 'config/main/default.conf' or can be found exactly at `$HOME/.bun/install/cache/bunx-zerv/config/main/default`
 ```
 All arguments are optional but for complex configuration, you can use custom config file instead.
