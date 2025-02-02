@@ -212,9 +212,11 @@ function ensureServers(argv, [listen, root]) {
                 .replace('$HOSTNAME', Bun.env.HOSTNAME)
                 .match(LISTEN_ADDR_RE)
 
-            server.port = port
-            server.hostname = hostname
-            servers[server.port] = server
+            servers[server.port] ||= { port, family: 'IPv4' }
+            servers[server.port].port ||= port
+
+            if (hostname === '[::]')
+                servers[server.port].family = 'IPv6'
         }
 
         server.root = server.root?.replaceAll('\\', '/')
