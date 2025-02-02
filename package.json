@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Bun HTTP server with Nginx style configurations",
   "keywords": ["http server", "bun server", "file server", "nginx"],
+  "repository": "yus-ham/bunx-zerv",
+  "license": "MIT",
+  "author": "yus-ham",
   "bin": {
     "zerv": "zerv.ts",
   }
