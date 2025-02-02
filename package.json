@@ -6,6 +6,12 @@
   "repository": "yus-ham/bunx-zerv",
   "license": "MIT",
   "author": "yus-ham",
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "scripts": {
+    "dev": "BUN_ENV=dev zerv",
+  },
   "bin": {
     "zerv": "zerv.ts",
   }

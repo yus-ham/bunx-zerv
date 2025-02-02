@@ -14,6 +14,9 @@ const LISTEN_ADDR_RE = /((.+):)?(\d+)$/
 const DEFAULT_CONFIG_FILE = 'config/main/default.conf'
 const global_config = {}
 
+Bun.env.NODE_ENV ||= Bun.env.BUN_ENV
+const DEV_ENV = Boolean(Bun.env.NODE_ENV) && Bun.env.NODE_ENV?.startsWith('dev')
+
 function parseCLIArgs() {
     try {
         return parseArgs({
@@ -60,7 +63,7 @@ export default async function run() {
 
         loadConfig(parser, config_file)
 
-        if (Bun.env.BUN_ENV === 'development' && config_file === DEFAULT_CONFIG_FILE)
+        if (DEV_ENV && config_file === DEFAULT_CONFIG_FILE)
             watch('config', { recursive: true }).on('change', () => loadConfig(parser, config_file))
 
         ensureServers(argv, positionals)
@@ -279,6 +282,7 @@ function startServer(server_cfg: object) {
 
     const server = serve({
         reusePort: true,
+        development: DEV_ENV,
         port: server_cfg.port,
         hostname: server_cfg.hostname,
         maxRequestBodySize: getClientMaxBodySize(global_config),
@@ -319,25 +323,17 @@ function startServer(server_cfg: object) {
 
         websocket: {
             open(wss) {
+                // @ts-ignore
                 wss.upstream_wsc = new WebSocket(wss.data.target_url)
-
-                //console.info('sws.open', sws)
-                // proxy('chat').ws(server, ws, 'open')
-
+                // @ts-ignore
                 wss.upstream_wsc.addEventListener('message', (e) => {
-                    // console.info('upstream_wsc.onmessage', e.data)
                     wss.send(e.data)
                 })
             },
             message(wss, message) {
-                //const ws: WebSocket = sws.data.req.upstreamWs
-                //console.info('sws.message', {sws, message})
-                // proxy_fe.ws(server, message)
-
+                // @ts-ignore
                 onWscOpen(wss.upstream_wsc, (wsc: WebSocket) => {
                     wsc.send(message)
-                    // wsc.close()
-                    // wsc.terminate()
                 })
             }
         },
@@ -360,12 +356,13 @@ function setServerAddress(config: object, server: Server) {
         return config.address = server.url
 
     config.hostname = '0.0.0.0';
-    const nets = networkInterfaces()
+    const nets = networkInterfaces() || []
 
     for (const interfaces of Object.values(nets)) {
-        for (const net_interface of interfaces) {
+        for (const net_interface of interfaces || []) {
             if (net_interface.address.startsWith('192.168')) {
-                return config.address = `${server.protocol}://${net_interface.address}:${server.port}/`;
+                    // @ts-ignore
+                    return config.address = `${server.protocol}://${net_interface.address}:${server.port}/`;
             }
         }
     }
