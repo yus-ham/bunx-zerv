@@ -9,7 +9,7 @@ Simply run `zerv` or `bunx zerv` if you want to skip installation process, this 
 
 Try opening http://localhost:3000 in your browser.
 
-`zerv [[<hostname>:]<port>] [<directory>] [options]`
+`zerv [[<hostname>:]<port>] [<directory>] [...options]`
 ```
 Arguments:
   hostname       Host name to be listen on, defaults to 0.0.0.0

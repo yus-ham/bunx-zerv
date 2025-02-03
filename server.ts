@@ -1,6 +1,7 @@
 import { watch } from "fs"
 import { dirname, join } from "path"
 import { networkInterfaces } from "os"
+import { version } from "./package.json"
 import { parseArgs, styleText } from "util"
 import { serve, Server, file, write, $ } from "bun"
 import { getClientMaxBodySize, getMaxWorker, toArray } from "./utils"
@@ -38,11 +39,14 @@ function parseCLIArgs() {
     }
 }
 
+const banner = () => styleText(['bold', 'cyan'], 'Welcome to Zerv ') + `(${version})\n`;
+
 export default async function run() {
     const { values: argv, positionals } = parseCLIArgs()
 
     if (argv?.help) {
-        console.info(`${styleText('yellow', 'Usage:')}\n  zerv [[<hostname>:]<port>] [<directory>] [options]\n`)
+        console.info(banner())
+        console.info(`${styleText('yellow', 'Usage:')}\n  zerv [[<hostname>:]<port>] [<directory>] [...options]\n`)
         console.info(styleText('yellow', 'Arguments:'))
         console.info(`  ${styleText('green', 'hostname')}       Host name to be listen on, defaults to ${styleText('green', '0.0.0.0')}`)
         console.info(`  ${styleText('green', 'port')}           Port to be listen on, defaults to ${styleText('green', '3000')}`)
@@ -82,6 +86,7 @@ export default async function run() {
             await write(argv.config, parser.toConf(cloned))
         }
 
+        console.info(banner())
         Bun.gc(true)
         startServers()
     }
