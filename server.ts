@@ -42,7 +42,7 @@ export default async function run() {
     const { values: argv, positionals } = parseCLIArgs()
 
     if (argv?.help) {
-        console.info(`${styleText('yellow', 'Usage:')}\n  zerv [[hostname:]port] [directory] [options]\n`)
+        console.info(`${styleText('yellow', 'Usage:')}\n  zerv [[<hostname>:]<port>] [<directory>] [options]\n`)
         console.info(styleText('yellow', 'Arguments:'))
         console.info(`  ${styleText('green', 'hostname')}       Host name to be listen on, defaults to ${styleText('green', '0.0.0.0')}`)
         console.info(`  ${styleText('green', 'port')}           Port to be listen on, defaults to ${styleText('green', '3000')}`)

@@ -2,7 +2,7 @@
 Bun HTTP server with Nginx style configurations
 
 ## Installation
-`bun add -g bunx-zerv`
+`bun add -g zerv`
 
 ## Usage
 Simply run `zerv` or `bunx zerv` if you want to skip installation process, this will start serving current directory to port 3000 of all available network interfaces (`0.0.0.0`).
