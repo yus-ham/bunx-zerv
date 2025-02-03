@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "Bun HTTP server with Nginx style configurations",
   "keywords": ["http server", "bun server", "file server", "nginx"],
-  "repository": "yus-ham/bunx-zerv",
+  "repository": "github:yus-ham/bunx-zerv",
   "license": "MIT",
   "author": "yus-ham",
+  "dependencies": {
+    "@webantic/nginx-config-parser": "^1.6.1"
+  },
   "devDependencies": {
     "bun-types": "latest"
   },
