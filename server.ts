@@ -112,8 +112,6 @@ type HandlerOpts = {
 const location_handlers = {
     async try_files(files: string, opts: HandlerOpts) {
         for (const entry of files?.split(' ') || []) {
-            // console.info('try_files:', entry)
-
             if (entry === '=404')
                 return new Response(null, { status: HTTP_NOT_FOUND })
 
@@ -136,11 +134,7 @@ const location_handlers = {
     },
 
     async proxy_pass(target_url: string, opts: HandlerOpts) {
-        //console.info('proxy_pass:', target_url)
-
         target_url = target_url + opts.req_url.pathname.slice(opts.path_prefix?.length!) + opts.req_url.search
-
-        //console.info('proxy_pass:', {altered_target_url: target_url})
 
         if (opts.path_prefix && !opts.req_url.pathname.startsWith(opts.path_prefix)) {
             return
@@ -148,7 +142,6 @@ const location_handlers = {
 
         const data = { target_url }
         if (opts.server.upgrade(opts.req, { data })) {
-            // console.info('101 HTTP_SWITCHING_PROTOCOLS', opts.req.url)
             return { status: HTTP_SWITCHING_PROTOCOLS } as Response
         }
 
@@ -160,7 +153,6 @@ const location_handlers = {
             body: await opts.req.arrayBuffer(),
         }
 
-        // console.info('forward req')
         return fetch(target_url, req_init)
     },
 
@@ -257,7 +249,6 @@ function setResponseHeaders(response: Response, headers: string[]) {
 
 function onWscOpen(wsc: WebSocket, callback: Function) {
     setTimeout(() => {
-        // console.info('upstream_wsc.readyState:', wsc.readyState)
         wsc.readyState === wsc.OPEN
             ? callback(wsc)
             : onWscOpen(wsc, callback)
@@ -268,23 +259,12 @@ function startServers(config?: any) {
     const workers_num = getMaxWorker(global_config)
 
     for (let i = 1; i <= workers_num; i++) {
-        for (config of global_config.http.server) {
-            startServer(config as object)
-        }
-
-        if (i === workers_num) {
-            let out = `Server started on ${config.hostname}:${config.port} with ${workers_num} workers`;
-            out += `\n    - Local     : http://127.0.0.1:${config.port}/`;
-
-            if (config.hostname === '0.0.0.0')
-                out += `\n    - Network   : ${config.address}`;
-
-            console.info(styleText('green', out))
-        }
+        for (config of global_config.http.server)
+            startServer(config as object, workers_num, i === workers_num)
     }
 }
 
-function startServer(server_cfg: object) {
+function startServer(server_cfg: object, workers_num, print_log = false) {
     server_cfg.location_actions ||= {}
 
     const server = serve({
@@ -306,8 +286,6 @@ function startServer(server_cfg: object) {
             }
 
             for (const [directive, config] of Object.entries(server_cfg)) {
-                //console.info({directive, actions})
-
                 if (directive.startsWith('location ')) {
                     const location_actions = {}
                     const actions_cfg = toArray(config)
@@ -351,6 +329,15 @@ function startServer(server_cfg: object) {
     })
 
     setServerAddress(server_cfg, server)
+    print_log && printServerInfo(server_cfg, workers_num)
+}
+
+function printServerInfo(config: object, workers_num: number) {
+    console.info(styleText('green', `Server started on ${config.hostname}:${config.port} with ${workers_num} workers`))
+    console.info(styleText('green', `    - Local     : http://127.0.0.1:${config.port}/`))
+
+    if (config.hostname === '0.0.0.0')
+        console.info(styleText('green', `    - Network   : ${config.address}`))
 }
 
 function setServerAddress(config: object, server: Server) {
