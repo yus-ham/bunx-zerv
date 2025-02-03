@@ -4,10 +4,14 @@ export function toArray(data: any) {
     return Array.isArray(data) ? data : (data ? [data] : [])
 }
 
-export function removeToArray(object: object, key: string) {
-    const result = toArray(object[key])
-    delete object[key]
-    return result
+export function removeProp(data: Record<string, any>, key: string) {
+    const value = data[key]
+    delete data[key]
+    return value
+}
+
+export function removePropToArray(data: object, key: string) {
+    return toArray(removeProp(data, key))
 }
 
 export function parseHumanReadableBytes(size_str: string) {
@@ -40,22 +44,21 @@ export function parseHumanReadableBytes(size_str: string) {
 
     return (unit_index > -1) ? parseByUnitIndex(unit_index, size_str.slice(0, -1)) : undefined
 
-    function parseByUnitIndex(index, value) {
-        value = parseFloat(value)
-        return value * Math.pow(1024, 1 + index)
+    function parseByUnitIndex(index: number, value: string) {
+        return parseFloat(value) * Math.pow(1024, 1 + index)
     }
 }
 
-export function getClientMaxBodySize(config: object) {
+export function getClientMaxBodySize(config: any) {
     if (typeof config.cached.http_client_max_body_size === undefined) {
         const max = config.http.client_max_body_size
         config.cached.http_client_max_body_size = parseHumanReadableBytes(max) || '';
-        return max ? cached.http_client_max_body_size : undefined
+        return max ? config.cached.http_client_max_body_size : undefined
     }
     return config.cached.http_client_max_body_size || undefined
 }
 
-export function getMaxWorker(config: object) {
+export function getMaxWorker(config: any) {
     if (config.worker_processes === 'auto')
         return navigator.hardwareConcurrency
     return parseInt(config.worker_processes) || 0

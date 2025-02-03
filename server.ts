@@ -3,8 +3,8 @@ import { dirname, join } from "path"
 import { networkInterfaces } from "os"
 import { version } from "./package.json"
 import { parseArgs, styleText } from "util"
-import { serve, Server, file, write, $ } from "bun"
-import { getClientMaxBodySize, getMaxWorker, toArray } from "./utils"
+import { serve, Server, file, write, $, ServeOptions } from "bun"
+import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 
@@ -13,7 +13,7 @@ const HTTP_NOT_FOUND = 404
 const HTTP_OK = 200
 const LISTEN_ADDR_RE = /((.+):)?(\d+)$/
 const DEFAULT_CONFIG_FILE = 'config/main/default.conf'
-const global_config = {}
+const global_config: any = {}
 
 Bun.env.NODE_ENV ||= Bun.env.BUN_ENV
 const DEV_ENV = Boolean(Bun.env.NODE_ENV) && Bun.env.NODE_ENV?.startsWith('dev')
@@ -29,7 +29,7 @@ function parseCLIArgs() {
                 spa: { type: 'boolean' },
             },
         })
-    } catch(err) {
+    } catch(err: any) {
         if (err.message.startsWith('Unexpected argument'))
             return console.error(err.message.slice(0, err.message.indexOf("'. ") + 1))
         let matches
@@ -42,7 +42,7 @@ function parseCLIArgs() {
 const banner = () => styleText(['bold', 'cyan'], 'Welcome to Zerv ') + `(${version})\n`;
 
 export default async function run() {
-    const { values: argv, positionals } = parseCLIArgs()
+    const { values: argv, positionals } = parseCLIArgs()!
 
     if (argv?.help) {
         console.info(banner())
@@ -105,8 +105,8 @@ type HandlerOpts = {
     req: Request;
     req_url: URL;
     server: Server;
-    server_cfg: object;
-    path_prefix: string;
+    server_cfg: any;
+    path_prefix?: string;
 }
 
 const location_handlers = {
@@ -161,9 +161,10 @@ const location_handlers = {
     async proxy_cache_bypass() { },
 }
 
-async function runActions(actions: object, opts = {}, response: never) {
+async function runActions(actions: any, opts: any = {}): Promise<Response|undefined> {
     for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
-        if (response = await location_handlers[action]?.(argument, opts)) {
+        const response = await location_handlers[action]?.(argument, opts)
+        if (response) {
             setResponseHeaders(response, global_config.http.add_header)
             setResponseHeaders(response, opts.server_cfg.add_header)
             setResponseHeaders(response, actions.add_header)
@@ -172,7 +173,7 @@ async function runActions(actions: object, opts = {}, response: never) {
     }
 }
 
-function ensureServers(argv, [listen, root]) {
+function ensureServers(argv: any, [listen, root]: string[]) {
     global_config.http.add_header = toArray(global_config.http.add_header)
 
     Object.defineProperty(global_config, 'cached', {
@@ -189,10 +190,10 @@ function ensureServers(argv, [listen, root]) {
         else if (!port)
             argv.root = listen
 
-        return global_config.http.server = [ getDefaultServer(argv, hostname, port) ]
+        return global_config.http.server = [ getDefaultServer(argv, hostname, +port) ]
     }
 
-    const servers: Record<string, object> = {}
+    const servers: Record<string, any> = {}
 
     for (const server of toArray(global_config.http.server)) {
         for (const listen_cfg of toArray(server.listen)) {
@@ -227,7 +228,7 @@ function ensureServers(argv, [listen, root]) {
         global_config.http.server.push(getDefaultServer({spa: false}))
 }
 
-function getDefaultServer(argv: object, hostname?: string, port?: number) {
+function getDefaultServer(argv: any, hostname?: string, port?: number) {
     return {
         port,
         hostname,
@@ -264,7 +265,7 @@ function startServers(config?: any) {
     }
 }
 
-function startServer(server_cfg: object, workers_num, print_log = false) {
+function startServer(server_cfg: any, workers_num: number, print_log = false) {
     server_cfg.location_actions ||= {}
 
     const server = serve({
@@ -274,7 +275,7 @@ function startServer(server_cfg: object, workers_num, print_log = false) {
         hostname: server_cfg.hostname,
         maxRequestBodySize: getClientMaxBodySize(global_config),
 
-        async fetch(req: Request, server: Server, response: never) {
+        async fetch(req: Request, server: Server) {
             const req_url = new URL(req.url)
             const opts: HandlerOpts = { req, req_url, server, server_cfg }
 
@@ -287,18 +288,20 @@ function startServer(server_cfg: object, workers_num, print_log = false) {
 
             for (const [directive, config] of Object.entries(server_cfg)) {
                 if (directive.startsWith('location ')) {
-                    const location_actions = {}
+                    const location_actions: any = {}
                     const actions_cfg = toArray(config)
 
                     server_cfg.location_actions[opts.path_prefix = directive.slice(9)] = location_actions
                     location_actions.add_header = []
 
-                    for (const actions of actions_cfg) {
-                        location_actions.add_header.push(...toArray(actions.add_header))
+                    for (let actions of actions_cfg) {
+                        actions = { ...actions }
+                        location_actions.add_header.push(...removePropToArray(actions, 'add_header'))
                         Object.assign(location_actions, actions)
                     }
 
-                    if (response = await runActions(location_actions, opts))
+                    const response = await runActions(location_actions, opts)
+                    if (response)
                         return response
                 }
             }
@@ -322,7 +325,7 @@ function startServer(server_cfg: object, workers_num, print_log = false) {
                 })
             }
         },
-        error(e) {
+        error(e: any) {
             if (e.name === 'ConnectionRefused')
                 return new Response(`Upstream error: ${e.message} ${e.path}`, { status: 500 })
         },
@@ -332,7 +335,7 @@ function startServer(server_cfg: object, workers_num, print_log = false) {
     print_log && printServerInfo(server_cfg, workers_num)
 }
 
-function printServerInfo(config: object, workers_num: number) {
+function printServerInfo(config: any, workers_num: number) {
     console.info(styleText('green', `Server started on ${config.hostname}:${config.port} with ${workers_num} workers`))
     console.info(styleText('green', `    - Local     : http://127.0.0.1:${config.port}/`))
 
@@ -340,7 +343,7 @@ function printServerInfo(config: object, workers_num: number) {
         console.info(styleText('green', `    - Network   : ${config.address}`))
 }
 
-function setServerAddress(config: object, server: Server) {
+function setServerAddress(config: any, server: Server) {
     config.port ||= server.port;
 
     if (config.address)
