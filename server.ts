@@ -3,7 +3,7 @@ import { dirname, join } from "path"
 import { networkInterfaces } from "os"
 import { version } from "./package.json"
 import { parseArgs, styleText } from "util"
-import { serve, Server, file, write, $, ServeOptions } from "bun"
+import { serve, Server, file, write, $ } from "bun"
 import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
@@ -164,7 +164,7 @@ const location_handlers = {
 async function runActions(actions: any, opts: any = {}): Promise<Response|undefined> {
     for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
         const response = await location_handlers[action]?.(argument, opts)
-        if (response) {
+        if (response?.status >= 200) {
             setResponseHeaders(response, global_config.http.add_header)
             setResponseHeaders(response, opts.server_cfg.add_header)
             setResponseHeaders(response, actions.add_header)
