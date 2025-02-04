@@ -153,7 +153,9 @@ const location_handlers = {
             body: await opts.req.arrayBuffer(),
         }
 
-        Bun.env.BUN_CONFIG_VERBOSE_FETCH && console.info('Forward request')
+        if (Bun.env.BUN_CONFIG_VERBOSE_FETCH == "1")
+            console.info('Forward request')
+
         return fetch(target_url, req_init)
     },
 
@@ -278,8 +280,12 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
 
         async fetch(req: Request, server: Server) {
             const client_socket = server.requestIP(req)
-            console.info(`${client_socket?.address}:${client_socket?.port}`, '|', req.method, req.url, Bun.inspect(req.headers, {colors: true, compact: true}).slice(12))
-            
+
+            console.info(
+                `${client_socket?.address}:${client_socket?.port}`, '|', req.method, req.url,
+                Bun.inspect(req.headers, {colors: true, compact: true}).slice(12).replaceAll('\\"', '"'),
+            )
+
             const req_url = new URL(req.url)
             const opts: HandlerOpts = { req, req_url, server, server_cfg }
 
