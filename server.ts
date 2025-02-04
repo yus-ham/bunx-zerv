@@ -93,12 +93,14 @@ export default async function run() {
 }
 
 function loadConfig(parser: NginxConfigParser, file: string) {
-    const config = parser.readConfigFile(file, {
-        ignoreIncludeErrors: true,
-        parseIncludes: true,
-    })
-
-    Object.assign(global_config, config)
+    try {
+        const config = parser.readConfigFile(file, { parseIncludes: true })
+        Object.assign(global_config, config)
+    } catch(err: any) {
+        console.error(err.message)
+        const config = parser.readConfigFile(file, { parseIncludes: true, ignoreIncludeErrors: true })
+        Object.assign(global_config, config)
+    }
 }
 
 type HandlerOpts = {
