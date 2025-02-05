@@ -101,6 +101,7 @@ function loadConfig(parser: NginxConfigParser, file: string) {
         const config = parser.readConfigFile(file, { parseIncludes: true, ignoreIncludeErrors: true })
         Object.assign(global_config, config)
     }
+    //console.info(Bun.inspect(global_config, {colors:true, depth:Infinity}))
 }
 
 type HandlerOpts = {
@@ -166,16 +167,24 @@ const location_handlers = {
     async proxy_cache_bypass() { },
 }
 
-async function runActions(actions: any, opts: any = {}): Promise<Response|undefined> {
+async function runActions(actions: any, opts: HandlerOpts): Promise<Response|undefined> {
+    if (opts.req.method === 'OPTIONS' && opts.req.headers.has('access-control-request-method')) {
+        return withHeaders(new Response(null, { status: 200 }), opts, actions)
+    }
+
     for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
         const response = await location_handlers[action]?.(argument, opts)
         if (response?.status >= 200) {
-            setResponseHeaders(response, global_config.http.add_header)
-            setResponseHeaders(response, opts.server_cfg.add_header)
-            setResponseHeaders(response, actions.add_header)
-            return response
+            return withHeaders(response, opts, actions)
         }
     }
+}
+
+function withHeaders(response: Response, opts: HandlerOpts, actions: any) {
+    setResponseHeaders(response, global_config.http.add_header, opts)
+    setResponseHeaders(response, opts.server_cfg.add_header, opts)
+    setResponseHeaders(response, actions.add_header, opts)
+    return response
 }
 
 function ensureServers(argv: any, [listen, root]: string[]) {
@@ -243,13 +252,22 @@ function getDefaultServer(argv: any = {}, hostname?: string, port?: any) {
     }
 }
 
-function setResponseHeaders(response: Response, headers: string[]) {
+function setResponseHeaders(response: Response, headers: string[], opts: HandlerOpts) {
     for (const header of headers || []) {
         const space_pos = header.indexOf(' ')
-        response.headers.set(
-            header.slice(0, space_pos),
-            header.slice(space_pos + 1).replace(/^["']|["']$/g, ''),
-        )
+        const name = header.slice(0, space_pos).toLowerCase()
+        let value = header.slice(space_pos + 1).replace(/^["']|["']$/g, '')
+
+        if (name.startsWith('access-control'))
+            value = value.replace(' always', '')
+
+        if (name.endsWith('allow-headers')) {
+            value = value.replace('$http_access_control_request_headers', opts.req.headers.get('access-control-request-headers') || '')
+            if (!value)
+                continue
+        }
+
+        response.headers.set(name, value)
     }
 }
 
