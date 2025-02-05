@@ -1,10 +1,10 @@
 import { watch } from "fs"
+import { styleText } from "util"
 import { dirname, join } from "path"
 import { networkInterfaces } from "os"
 import { version } from "./package.json"
-import { parseArgs, styleText } from "util"
 import { serve, Server, file, write, $ } from "bun"
-import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray } from "./utils"
+import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray, parseCLIArgs } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 
@@ -18,34 +18,14 @@ const global_config: any = {}
 Bun.env.NODE_ENV ||= Bun.env.BUN_ENV
 const DEV_ENV = Boolean(Bun.env.NODE_ENV) && Bun.env.NODE_ENV?.startsWith('dev')
 
-function parseCLIArgs() {
-    try {
-        return parseArgs({
-            allowPositionals: true,
-            options: {
-                help: { type: 'boolean', short: 'h' },
-                config: { type: 'string', short: 'c', default: DEFAULT_CONFIG_FILE },
-                save: { type: 'boolean', short: 's' },
-                spa: { type: 'boolean' },
-            },
-        })
-    } catch(err: any) {
-        if (err.message.startsWith('Unexpected argument'))
-            return console.error(err.message.slice(0, err.message.indexOf("'. ") + 1))
-        let matches
-        if (matches = err.message.match(/Option '(-\w)[\s\S]+To specify an option[\s\S]+use '(--[\w]+)/))
-            return console.error(`Option '${matches[1]}, ${matches[2]} <value>' argument missing`)
-        return console.error(err.message)
-    }
-}
-
-const banner = () => styleText(['bold', 'cyan'], 'Welcome to Zerv ') + `(${version})\n`;
+const gapura = () => styleText(['bold', 'cyan'], 'Welcome to Zerv ') + `(${version})\n`;
+const inspectHeaders = (hdrs: Headers) => Bun.inspect(hdrs, {colors: true, compact: true}).slice(12).replaceAll('\\"', '"')
 
 export default async function run() {
-    const { values: argv, positionals } = parseCLIArgs()!
+    const { values: argv, positionals } = parseCLIArgs(DEFAULT_CONFIG_FILE)!
 
     if (argv?.help) {
-        console.info(banner())
+        console.info(gapura())
         console.info(`${styleText('yellow', 'Usage:')}\n  zerv [[<hostname>:]<port>] [<directory>] [...options]\n`)
         console.info(styleText('yellow', 'Arguments:'))
         console.info(`  ${styleText('green', 'hostname')}       Host name to be listen on, defaults to ${styleText('green', '0.0.0.0')}`)
@@ -86,7 +66,7 @@ export default async function run() {
             await write(argv.config, parser.toConf(cloned))
         }
 
-        console.info(banner())
+        console.info(gapura())
         Bun.gc(true)
         startServers()
     }
@@ -110,6 +90,7 @@ type HandlerOpts = {
     server: Server;
     server_cfg: any;
     path_prefix?: string;
+    altered_headers?: Headers;
 }
 
 const location_handlers = {
@@ -156,10 +137,12 @@ const location_handlers = {
             body: await opts.req.arrayBuffer(),
         }
 
-        if (Bun.env.BUN_CONFIG_VERBOSE_FETCH == "1")
-            console.info('Forward request')
-
         return fetch(target_url, req_init)
+            .then(response => {
+                console.info('  proxy_pass >', opts.req.method, target_url, 'HTTP/1.1')
+                console.info('  < HTTP/1.1', response.status, response.statusText, inspectHeaders(response.headers))
+                return response
+            })
     },
 
     async proxy_http_version() { },
@@ -181,12 +164,33 @@ async function runActions(actions: any, opts: HandlerOpts): Promise<Response|und
 }
 
 function withHeaders(response: Response, opts: HandlerOpts, actions: any) {
+    opts.altered_headers = new Headers()
     setResponseHeaders(response, global_config.http.add_header, opts)
     setResponseHeaders(response, opts.server_cfg.add_header, opts)
     setResponseHeaders(response, actions.add_header, opts)
+    console.info('< Altered headers', inspectHeaders(opts.altered_headers))
     return response
 }
 
+function setResponseHeaders(response: Response, headers: string[], opts: HandlerOpts) {
+    for (const header of headers || []) {
+        const space_pos = header.indexOf(' ')
+        const name = header.slice(0, space_pos).toLowerCase()
+        let value = header.slice(space_pos + 1).replace(/^["']|["']$/g, '')
+
+        if (name.startsWith('access-control'))
+            value = value.replace(' always', '')
+
+        if (name.endsWith('allow-headers')) {
+            value = value.replace('$http_access_control_request_headers', opts.req.headers.get('access-control-request-headers') || '')
+            if (!value)
+                continue
+        }
+
+        response.headers.append(name, value)
+        opts.altered_headers!.append(name, value)
+    }
+}
 function ensureServers(argv: any, [listen, root]: string[]) {
     global_config.http.add_header = toArray(global_config.http.add_header)
 
@@ -252,25 +256,6 @@ function getDefaultServer(argv: any = {}, hostname?: string, port?: any) {
     }
 }
 
-function setResponseHeaders(response: Response, headers: string[], opts: HandlerOpts) {
-    for (const header of headers || []) {
-        const space_pos = header.indexOf(' ')
-        const name = header.slice(0, space_pos).toLowerCase()
-        let value = header.slice(space_pos + 1).replace(/^["']|["']$/g, '')
-
-        if (name.startsWith('access-control'))
-            value = value.replace(' always', '')
-
-        if (name.endsWith('allow-headers')) {
-            value = value.replace('$http_access_control_request_headers', opts.req.headers.get('access-control-request-headers') || '')
-            if (!value)
-                continue
-        }
-
-        response.headers.set(name, value)
-    }
-}
-
 function onWscOpen(wsc: WebSocket, callback: Function) {
     setTimeout(() => {
         wsc.readyState === wsc.OPEN
@@ -301,10 +286,7 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
         async fetch(req: Request, server: Server) {
             const client_socket = server.requestIP(req)
 
-            console.info(
-                `${client_socket?.address}:${client_socket?.port}`, '|', req.method, req.url,
-                Bun.inspect(req.headers, {colors: true, compact: true}).slice(12).replaceAll('\\"', '"'),
-            )
+            console.info(`${client_socket?.address}:${client_socket?.port}`, '>', req.method, req.url, inspectHeaders(req.headers))
 
             const req_url = new URL(req.url)
             const opts: HandlerOpts = { req, req_url, server, server_cfg }

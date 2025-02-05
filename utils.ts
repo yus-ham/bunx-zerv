@@ -1,3 +1,5 @@
+import { parseArgs } from "util";
+
 const BYTE_UNITS = 'KMGTPEZY';
 
 export function toArray(data: any) {
@@ -12,6 +14,27 @@ export function removeProp(data: Record<string, any>, key: string) {
 
 export function removePropToArray(data: object, key: string) {
     return toArray(removeProp(data, key))
+}
+
+export function parseCLIArgs(config_file: string) {
+    try {
+        return parseArgs({
+            allowPositionals: true,
+            options: {
+                help: { type: 'boolean', short: 'h' },
+                config: { type: 'string', short: 'c', default: config_file },
+                save: { type: 'boolean', short: 's' },
+                spa: { type: 'boolean' },
+            },
+        })
+    } catch(err: any) {
+        if (err.message.startsWith('Unexpected argument'))
+            return console.error(err.message.slice(0, err.message.indexOf("'. ") + 1))
+        let matches
+        if (matches = err.message.match(/Option '(-\w)[\s\S]+To specify an option[\s\S]+use '(--[\w]+)/))
+            return console.error(`Option '${matches[1]}, ${matches[2]} <value>' argument missing`)
+        return console.error(err.message)
+    }
 }
 
 export function parseHumanReadableBytes(size_str: string) {
