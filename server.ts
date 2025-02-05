@@ -192,10 +192,10 @@ function ensureServers(argv: any, [listen, root]: string[]) {
 
         if (root)
             argv.root = root
-        else if (!port)
+        else if (!port && port !== '0')
             argv.root = listen
 
-        return global_config.http.server = [ getDefaultServer(argv, hostname, +port) ]
+        return global_config.http.server = [ getDefaultServer(argv, hostname, port) ]
     }
 
     const servers: Record<string, any> = {}
@@ -230,10 +230,10 @@ function ensureServers(argv: any, [listen, root]: string[]) {
     global_config.http.server = Object.values(servers)
 
     if (!global_config.http.server.length)
-        global_config.http.server.push(getDefaultServer({spa: false}))
+        global_config.http.server.push(getDefaultServer())
 }
 
-function getDefaultServer(argv: any, hostname?: string, port?: number) {
+function getDefaultServer(argv: any = {}, hostname?: string, port?: any) {
     return {
         port,
         hostname,
@@ -358,7 +358,8 @@ function printServerInfo(config: any, workers_num: number) {
 }
 
 function setServerAddress(config: any, server: Server) {
-    config.port ||= server.port;
+    if (!config.port && config.port != 0)
+        config.port = server.port
 
     if (config.address)
         return config.address
