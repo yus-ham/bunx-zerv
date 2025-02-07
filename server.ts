@@ -289,8 +289,16 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
 
         async fetch(req: Request, server: Server) {
             const client_socket = server.requestIP(req)
+            const origin_address = req.headers.get('x-forwarded-for')
 
-            console.info(`${timestamp()} ${client_socket?.address}:${client_socket?.port} >`, req.method, req.url, inspectHeaders(req.headers))
+            console.info(
+                timestamp(),
+                origin_address ? origin_address + ' > ' : '',
+                `${client_socket?.address}:${client_socket?.port} >`,
+                req.method,
+                req.url,
+                inspectHeaders(req.headers),
+            )
 
             const req_url = new URL(req.url)
             const opts: HandlerOpts = {
