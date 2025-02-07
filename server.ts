@@ -20,6 +20,7 @@ const DEV_ENV = Boolean(Bun.env.NODE_ENV) && Bun.env.NODE_ENV?.startsWith('dev')
 
 const gapura = () => styleText(['bold', 'cyan'], 'Welcome to Zerv ') + `(${version})\n`;
 const inspectHeaders = (hdrs: Headers) => Bun.inspect(hdrs, {colors: true, compact: true}).slice(12).replaceAll('\\"', '"')
+const timestamp = (d = '') => styleText('blueBright', `[${(d = new Date().toISOString()), d.slice(0, 10)} ${d.slice(11, 23)}]`)
 
 export default async function run() {
     const { values: argv, positionals } = parseCLIArgs(DEFAULT_CONFIG_FILE)!
@@ -137,10 +138,12 @@ const location_handlers = {
             body: await opts.req.arrayBuffer(),
         }
 
+        const start_time = timestamp()
+
         return fetch(target_url, req_init)
             .then(response => {
-                console.info('  proxy_pass >', opts.req.method, target_url, 'HTTP/1.1')
-                console.info('  < HTTP/1.1', response.status, response.statusText, inspectHeaders(response.headers))
+                console.info(`${start_time}  proxy_pass >`, opts.req.method, target_url, 'HTTP/1.1')
+                console.info(`${timestamp()}  < HTTP/1.1`, response.status, response.statusText, inspectHeaders(response.headers))
                 return response
             })
     },
@@ -168,7 +171,7 @@ function withHeaders(response: Response, opts: HandlerOpts, actions: any) {
     setResponseHeaders(response, global_config.http.add_header, opts)
     setResponseHeaders(response, opts.server_cfg.add_header, opts)
     setResponseHeaders(response, actions.add_header, opts)
-    console.info('< Altered headers', inspectHeaders(opts.altered_headers))
+    console.info(`${timestamp()} < HTTP/1.1 ${response.status} ${response.statusText} | altered headers`, inspectHeaders(opts.altered_headers))
     return response
 }
 
@@ -286,7 +289,7 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
         async fetch(req: Request, server: Server) {
             const client_socket = server.requestIP(req)
 
-            console.info(`${client_socket?.address}:${client_socket?.port}`, '>', req.method, req.url, inspectHeaders(req.headers))
+            console.info(`${timestamp()} ${client_socket?.address}:${client_socket?.port} >`, req.method, req.url, inspectHeaders(req.headers))
 
             const req_url = new URL(req.url)
             const opts: HandlerOpts = { req, req_url, server, server_cfg }
