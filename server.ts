@@ -302,6 +302,8 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
             }
 
             req.headers.set('x-forwarded-for', client_socket?.address!)
+            req.headers.set('x-forwarded-host', req_url.host)
+            req.headers.set('x-forwarded-proto', req_url.protocol)
 
             for (const [path_prefix, actions] of Object.entries(server_cfg.location_actions)) {
                 if (req_url.pathname.startsWith(path_prefix)) {
