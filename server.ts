@@ -86,6 +86,7 @@ function loadConfig(parser: NginxConfigParser, file: string) {
 }
 
 type HandlerOpts = {
+    req_id: string;
     req: Request;
     req_url: URL;
     server: Server;
@@ -292,34 +293,45 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
             console.info(`${timestamp()} ${client_socket?.address}:${client_socket?.port} >`, req.method, req.url, inspectHeaders(req.headers))
 
             const req_url = new URL(req.url)
-            const opts: HandlerOpts = { req, req_url, server, server_cfg }
+            const opts: HandlerOpts = {
+                req_id: Bun.randomUUIDv7(),
+                req,
+                req_url,
+                server,
+                server_cfg,
+            }
 
             req.headers.set('x-forwarded-for', client_socket?.address!)
 
             for (const [path_prefix, actions] of Object.entries(server_cfg.location_actions)) {
                 if (req_url.pathname.startsWith(path_prefix)) {
                     opts.path_prefix = path_prefix
-                    return runActions(actions, opts)
+                    return runActions(actions, opts).catch(e => catchUpstreamError(e, opts))
                 }
             }
 
             for (const [directive, config] of Object.entries(server_cfg)) {
-                if (directive.startsWith('location ')) {
-                    const location_actions: any = {}
-                    const actions_cfg = toArray(config)
+                try {
+                    if (directive.startsWith('location ')) {
+                        const location_actions: any = {}
+                        const actions_cfg = toArray(config)
 
-                    server_cfg.location_actions[opts.path_prefix = directive.slice(9)] = location_actions
-                    location_actions.add_header = []
+                        server_cfg.location_actions[opts.path_prefix = directive.slice(9)] = location_actions
+                        location_actions.add_header = []
 
-                    for (let actions of actions_cfg) {
-                        actions = { ...actions }
-                        location_actions.add_header.push(...removePropToArray(actions, 'add_header'))
-                        Object.assign(location_actions, actions)
+                        for (let actions of actions_cfg) {
+                            actions = { ...actions }
+                            location_actions.add_header.push(...removePropToArray(actions, 'add_header'))
+                            Object.assign(location_actions, actions)
+                        }
+
+                        const response = await runActions(location_actions, opts)
+                        if (response)
+                            return response
                     }
-
-                    const response = await runActions(location_actions, opts)
-                    if (response)
-                        return response
+                } catch(e) {
+                    if (e = catchUpstreamError(e, opts))
+                        return e as Response
                 }
             }
 
@@ -342,14 +354,17 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
                 })
             }
         },
-        error(e: any) {
-            if (e.name === 'ConnectionRefused')
-                return new Response(`Upstream error: ${e.message} ${e.path}`, { status: 500 })
-        },
     })
 
     setServerAddress(server_cfg, server)
     print_log && printServerInfo(server_cfg, workers_num)
+}
+
+function catchUpstreamError(e: any, opts: HandlerOpts) {
+    console.error(e)
+    if (e.code === 'ConnectionRefused')
+        e.message = `Unable to connect to upstream server` + (DEV_ENV ? ` ${e.path}` : ``)
+    return new Response(`${e.code}: ${e.message}\n${opts.req_id}`, { status: 500 })
 }
 
 function printServerInfo(config: any, workers_num: number) {
