@@ -364,7 +364,7 @@ function catchUpstreamError(e: any, opts: HandlerOpts) {
     console.error(e)
     if (e.code === 'ConnectionRefused')
         e.message = `Unable to connect to upstream server` + (DEV_ENV ? ` ${e.path}` : ``)
-    return new Response(`${e.code}: ${e.message}\n${opts.req_id}`, { status: 500 })
+    return new Response(`${e.code}: ${e.message}\nRequest ID: ${opts.req_id}`, { status: 500 })
 }
 
 function printServerInfo(config: any, workers_num: number) {
