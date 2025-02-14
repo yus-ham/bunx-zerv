@@ -176,6 +176,17 @@ function withHeaders(response: Response, opts: HandlerOpts, actions: any) {
     return response
 }
 
+const multi_value_headers = [
+    'cache-control',
+    'accept-ranges',
+    'content-encoding',
+    'www-authenticate',
+    'warning',
+    'allow',
+    'vary',
+    'link',
+]
+
 function setResponseHeaders(response: Response, headers: string[], opts: HandlerOpts) {
     for (const header of headers || []) {
         const space_pos = header.indexOf(' ')
@@ -191,10 +202,14 @@ function setResponseHeaders(response: Response, headers: string[], opts: Handler
                 continue
         }
 
-        response.headers.append(name, value)
+        multi_value_headers.includes(name)
+            ? response.headers.append(name, value)
+            : response.headers.set(name, value)
+
         opts.altered_headers!.append(name, value)
     }
 }
+
 function ensureServers(argv: any, [listen, root]: string[]) {
     global_config.http.add_header = toArray(global_config.http.add_header)
 
