@@ -389,6 +389,8 @@ function printServerInfo(config: any, workers_num: number) {
 
     if (config.hostname === '0.0.0.0')
         console.info(styleText('green', `    - Network   : ${config.address}`))
+
+    console.info(styleText('green', `    - Root      : ${config.root}`))
 }
 
 function setServerAddress(config: any, server: Server) {

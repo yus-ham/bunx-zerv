@@ -3,7 +3,7 @@ import { $, sleep, spawn } from "bun";
 import { parseCLIArgs } from "../utils";
 
 
-const DEFAULT_CONFIG_FILE = 'config/main/default.conf'
+const DEFAULT_CONFIG_FILE = 'config/main/default.conf';
 
 function zerv(args?: string | string[]) {
     args = String(args || '').split(' ')
@@ -72,6 +72,16 @@ it(`should not exposed to network`, async () => {
     expect(out2).toContain('Server started on 127.0.0.1:4000')
     expect(out2).toMatch(/- Local +: http:\/\/127\.0\.0\.1:4000\//)
     expect(out2).not.toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:4000\//)
+})
+
+it(`should serve current working directory`, async () => {
+    const out = await zerv().runWithTimeout(100).getOutput()
+    expect(out).toMatch(new RegExp(`- Root +: ${process.cwd()}`))
+})
+
+it(`should serve specified directory`, async () => {
+    const out = await zerv('testdir').runWithTimeout(100).getOutput()
+    expect(out).toMatch(new RegExp(`- Root +: testdir`))
 })
 
 it(`should respond with index.html content`, async () => {
