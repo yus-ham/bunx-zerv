@@ -1,5 +1,5 @@
-import { expect, it } from "bun:test";
-import { $, sleep, spawn } from "bun";
+import { describe, expect, it } from "bun:test";
+import { $, serve, sleep, spawn } from "bun";
 import { parseCLIArgs } from "../utils";
 
 
@@ -8,7 +8,13 @@ const DEFAULT_CONFIG_FILE = 'config/main/default.conf';
 function zerv(args?: string | string[]) {
     args = String(args || '').split(' ')
     const opts = parseCLIArgs(DEFAULT_CONFIG_FILE, args)!
-    const proc = spawn(['./zerv.ts', ...args], { stdout: 'pipe', stderr: 'pipe' })
+    const proc = spawn(['./zerv.ts', ...args], {
+        stdout: 'pipe',
+        ipc(message) {
+            if (opts.port === '0')
+                opts.port = message.http.port
+        },
+    })
 
     const stop = (timeout = 0) => sleep(timeout).then(() => proc.kill())
 
@@ -26,108 +32,157 @@ function zerv(args?: string | string[]) {
         })
     }
 
-    opts.port ||= '3000';
-
     return {
         stop,
         getOutput,
         pid: proc.pid,
+        get port() { return opts.port },
         runWithTimeout(kill_timeout: number) {
             stop(kill_timeout)
-            return { getOutput }
+            return {
+                getOutput, 
+                get port() { return opts.port },
+            }
         },
-        fetch: (url = '') => fetch(`http://localhost:${opts.port}${url}`),
+        fetch: (path = '') => fetch(`http://localhost:${opts.port}${path}`),
     }
 }
 
 const text = (buf: any) => new TextDecoder().decode(buf.value)
 
-it(`should use default config`, async () => {
-    function assert(out: any) {
-        expect(out).toContain('Welcome to Zerv')
-        expect(out).toContain('Server started on 0.0.0.0:3000')
-        expect(out).toMatch(/- Local +: http:\/\/127\.0\.0\.1:3000\//)
-        expect(out).toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:3000\//)
-    }
+describe('starting server', () => {
+    it(`should use default config`, async () => {
+        function assert(out: any) {
+            expect(out).toContain('Welcome to Zerv')
+            expect(out).toContain('Server started on 0.0.0.0:3000')
+            expect(out).toMatch(/- Local +: http:\/\/127\.0\.0\.1:3000\//)
+            expect(out).toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:3000\//)
+        }
 
-    assert(await zerv().runWithTimeout(100).getOutput())
-    assert(await zerv('-c noexist.conf').runWithTimeout(100).getOutput())
-})
+        assert(await zerv().runWithTimeout(100).getOutput())
+        assert(await zerv('-c noexist.conf').runWithTimeout(100).getOutput())
+    })
 
-it(`should use specified port`, async () => {
-    const out = await zerv('4000').runWithTimeout(100).getOutput()
-    expect(out).toContain('Server started on 0.0.0.0:4000')
-    expect(out).toMatch(/- Local +: http:\/\/127\.0\.0\.1:4000\//)
-    expect(out).toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:4000\//)
-})
+    it(`should use specified port`, async () => {
+        const out = await zerv('45678').runWithTimeout(100).getOutput()
+        expect(out).toContain('Server started on 0.0.0.0:45678')
+        expect(out).toMatch(/- Local +: http:\/\/127\.0\.0\.1:45678\//)
+        expect(out).toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:45678\//)
+    })
 
-it(`should not exposed to network`, async () => {
-    const out = await zerv('localhost:4000').runWithTimeout(100).getOutput()
-    const out2 = await zerv('127.0.0.1:4000').runWithTimeout(100).getOutput()
+    it(`should use random port`, async () => {
+        const server = zerv('0').runWithTimeout(100)
+        const out = await server.getOutput()
+        expect(out).toContain(`Server started on 0.0.0.0:${server.port}`)
+    })
 
-    expect(out).toContain('Server started on localhost:4000')
-    expect(out).toMatch(/- Local +: http:\/\/127\.0\.0\.1:4000\//)
-    expect(out).not.toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:4000\//)
+    it(`should only exposed to local network`, async () => {
+        let server = zerv('localhost:0').runWithTimeout(100)
+        let server1 = zerv('127.0.0.1:0').runWithTimeout(100)
+        const out = await server.getOutput()
+        const out1 = await server1.getOutput()
 
-    expect(out2).toContain('Server started on 127.0.0.1:4000')
-    expect(out2).toMatch(/- Local +: http:\/\/127\.0\.0\.1:4000\//)
-    expect(out2).not.toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:4000\//)
-})
+        expect(out).toContain(`Server started on localhost:${server.port}`)
+        expect(out).toMatch(new RegExp(`- Local +: http://127\.0\.0\.1:${server.port}/`))
+        expect(out).not.toMatch(new RegExp(`- Network +: http://192\.168\.\d+\.\d+:${server.port}/`))
 
-it(`should serve current working directory`, async () => {
-    const out = await zerv().runWithTimeout(100).getOutput()
-    expect(out).toMatch(new RegExp(`- Root +: ${process.cwd()}`))
-})
+        expect(out1).toContain(`Server started on 127.0.0.1:${server1.port}`)
+        expect(out1).toMatch(new RegExp(`- Local +: http://127\.0\.0\.1:${server1.port}/`))
+        expect(out1).not.toMatch(new RegExp(`- Network +: http://192\.168\.\d+\.\d+:${server1.port}/`))
+    })
 
-it(`should serve specified directory`, async () => {
-    const out = await zerv('testdir').runWithTimeout(100).getOutput()
-    expect(out).toMatch(new RegExp(`- Root +: testdir`))
-})
+    it(`should serve current working directory`, async () => {
+        const out = await zerv().runWithTimeout(100).getOutput()
+        expect(out).toMatch(new RegExp(`- Root +: ${process.cwd()}`))
+    })
 
-it(`should respond with index.html content`, async () => {
-    const testdir = `${import.meta.dirname}/server_root_${Bun.randomUUIDv7()}`
-    // console.info({testdir})
-    await $`mkdir ${testdir}`;
-    await $`echo 'hello index' > ${testdir}/index.html`;
-
-    const server = zerv(`${testdir}`)
-    await sleep(500).then(async () => {
-        const res = await server.fetch()
-        expect((await res.text()).trim()).toMatch('hello index')
-        expect(res.status).toBe(200)
-
-        server.stop()
-        await sleep(200).then(() => $`rm -r ${testdir}`)
+    it(`should serve specified directory`, async () => {
+        const out = await zerv('testdir').runWithTimeout(100).getOutput()
+        expect(out).toMatch(new RegExp(`- Root +: testdir`))
     })
 })
 
-it(`should respond with status 404 not found`, async () => {
-    const testdir = `${import.meta.dirname}/server_root_${Bun.randomUUIDv7()}`
-    // console.info({testdir})
-    await $`mkdir ${testdir}`;
+describe('try_files', () => {
+    it(`should respond with index.html content`, async () => {
+        const testdir = `${import.meta.dirname}/server_root-${Bun.randomUUIDv7()}`
+        await $`mkdir ${testdir}`;
+        await $`echo 'hello index' > ${testdir}/index.html`;
 
-    const server = zerv(`${testdir}`)
-    await sleep(500).then(async () => {
-        const res = await server.fetch('/invalid-resource')
-        expect(res.status).toBe(404)
+        const server = zerv(`0 ${testdir}`)
+        await sleep(100).then(async () => {
+            const res = await server.fetch()
+            const res2 = await server.fetch('/index.html')
 
-        server.stop()
-        await sleep(200).then(() => $`rm -r ${testdir}`)
+            expect((await res.text()).trim()).toMatch('hello index')
+            expect((await res2.text()).trim()).toMatch('hello index')
+            expect(res.status).toBe(200)
+
+            server.stop()
+            await sleep(50).then(() => $`rm -r ${testdir}`)
+        })
+    })
+
+    it(`should respond with status 404 not found`, async () => {
+        const testdir = `${import.meta.dirname}/server_root-${Bun.randomUUIDv7()}`
+        await $`mkdir ${testdir}`;
+
+        const server = zerv(`0 ${testdir}`)
+        await sleep(100).then(async () => {
+            const res = await server.fetch('/invalid-resource')
+            expect(res.status).toBe(404)
+
+            server.stop()
+            await sleep(50).then(() => $`rm -r ${testdir}`)
+        })
+    })
+
+    it(`should running with SPA mode`, async () => {
+        const testdir = `${import.meta.dirname}/server_root-${Bun.randomUUIDv7()}`
+        await $`mkdir ${testdir}`;
+        await $`echo 'heelo SPA' > ${testdir}/index.html`;
+
+        const server = zerv(`0 ${testdir} --spa`)
+        await sleep(100).then(async () => {
+            const res = await server.fetch('/spa/route')
+
+            expect((await res.text()).trim()).toMatch('heelo SPA')
+            expect(res.status).toBe(200)
+
+            await server.stop()
+            await sleep(50).then(() => $`rm -r ${testdir}`)
+        })
     })
 })
 
-it(`should running with SPA mode`, async () => {
-    const testdir = `${import.meta.dirname}/server_root_${Bun.randomUUIDv7()}`
-    // console.info({testdir})
-    await $`mkdir ${testdir}`;
-    await $`echo 'heelo SPA' > ${testdir}/index.html`;
+describe('proxy_pass', () => {
+    it(`should forward request to and get response from upstream`, async () => {
+        const testdir = `${import.meta.dirname}/server_root_upstream`
+        const server = zerv(`23456 -c ${testdir}/server.conf`)
+        const upstream = serve({
+            reusePort: true,
+            port: 23455,
+            routes: { '/404/*': new Response('', {status: 404}) },
+            fetch: (req) => new Response(new URL(req.url).pathname),
+        })
 
-    const server = zerv(`${testdir} --spa`)
-    await sleep(500).then(async () => {
-        const res = await server.fetch('/spa/route')
-        expect((await res.text()).trim()).toMatch('heelo SPA')
-        expect(res.status).toBe(200)
-        await server.stop()
-        await sleep(200).then(() => $`rm -r ${testdir}`)
+        await sleep(50).then(async () => {
+            const res = await server.fetch('/upstream/index.html')
+            const res1 = await server.fetch('/upstream/404/not/found')
+            const res2 = await server.fetch('/upstream-123-qwe') // handled by '/upstream-123'
+            const res3 = await server.fetch('/upstream-asd-123')
+            const res4 = await server.fetch('/upstream-asd')
+
+            expect(res.status).toBe(200)
+            expect(res1.status).toBe(404)
+            expect(res2.status).toBe(404)
+            expect(res3.status).toBe(200)
+            expect(res4.status).toBe(200)
+            expect((await res.text()).trim()).toMatch('/index.html')
+            expect((await res3.text()).trim()).toMatch('/')
+            expect((await res4.text()).trim()).toMatch('/')
+
+            await upstream.stop(true)
+            await server.stop()
+        })
     })
 })

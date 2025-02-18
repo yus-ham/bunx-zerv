@@ -118,11 +118,21 @@ const location_handlers = {
         }
     },
 
-    async proxy_pass(target_url: string, opts: HandlerOpts) {
-        target_url = target_url + opts.req_url.pathname.slice(opts.path_prefix?.length!) + opts.req_url.search
+    async proxy_pass(target_url: string | URL, opts: HandlerOpts) {
+        const start_time = timestamp()
 
         if (opts.path_prefix && !opts.req_url.pathname.startsWith(opts.path_prefix)) {
+            DEV_ENV && console.info(`${start_time}  location doesn't match`)
             return
+        }
+
+        try {
+            target_url = new URL(target_url + opts.req_url.pathname.slice(opts.path_prefix?.length!) + opts.req_url.search)
+        } catch(e) {
+            if (e.code !== 'ERR_INVALID_URL')
+                console.error(e)
+
+            return new Response('', {status:404})
         }
 
         const data = { target_url }
@@ -138,12 +148,15 @@ const location_handlers = {
             body: await opts.req.arrayBuffer(),
         }
 
-        const start_time = timestamp()
-
         return fetch(target_url, req_init)
             .then(response => {
-                console.info(`${start_time}  proxy_pass >`, opts.req.method, target_url, 'HTTP/1.1')
-                console.info(`${timestamp()}  < HTTP/1.1`, response.status, response.statusText, inspectHeaders(response.headers))
+                console.info(`${start_time}  proxy_pass >`, opts.req.method, String(target_url), `HTTP/${opts.http_version}`)
+                console.info(`${timestamp()}  < HTTP/${opts.http_version}`, response.status, response.statusText, inspectHeaders(response.headers))
+
+                // @FIXME: I dont know much about gzip
+                if (response.headers.get('content-encoding') === 'gzip')
+                    response.headers.delete('content-encoding')
+
                 return response
             })
     },
@@ -217,10 +230,6 @@ function ensureServers(opts: Options) {
         writable: false,
         value: {},
     })
-
-    if (opts.port) {
-        return global_config.http.server = [ getDefaultServer(opts) ]
-    }
 
     const servers: Record<string, any> = {}
 
@@ -372,6 +381,7 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
         },
     })
 
+    process.send?.({http: {port: server.port}})
     setServerAddress(server_cfg, server)
     print_log && printServerInfo(server_cfg, workers_num)
 }
@@ -394,8 +404,7 @@ function printServerInfo(config: any, workers_num: number) {
 }
 
 function setServerAddress(config: any, server: Server) {
-    if (!config.port && config.port != 0)
-        config.port = server.port
+    config.port = server.port
 
     if (config.address)
         return config.address

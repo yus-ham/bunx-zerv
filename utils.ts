@@ -58,6 +58,8 @@ export function parseCLIArgs(config_file: string, args?: string[]) {
         let matches
         if (matches = err.message.match(/Option '(-\w)[\s\S]+To specify an option[\s\S]+use '(--[\w]+)/))
             return console.error(`Option '${matches[1]}, ${matches[2]} <value>' argument missing`)
+        if (err.message.startsWith('Unknown option'))
+            return console.error(err.message.slice(0, err.message.indexOf("'.") + 2))
         return console.error(err.message)
     }
 }
@@ -109,7 +111,7 @@ export function getClientMaxBodySize(config: any) {
 export function getMaxWorker(config: any) {
     if (config.worker_processes === 'auto')
         return navigator.hardwareConcurrency
-    return parseInt(config.worker_processes) || 0
+    return parseInt(config.worker_processes) || 1
 }
 
 export default { parseCLIArgs }

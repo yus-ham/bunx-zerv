@@ -1,7 +1,7 @@
 node_modules/
 config/main/*
 config/sites-available/*
-tests/server_root_*
+tests/server_root-*
 !config/main/default.conf
 !config/sites-available/default
 !config/main/default.conf
