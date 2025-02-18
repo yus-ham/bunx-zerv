@@ -13,7 +13,7 @@
     "bun-types": "latest"
   },
   "scripts": {
-    "dev": "BUN_ENV=dev zerv",
+    "dev": "BUN_ENV=dev bun --watch zerv.ts",
   },
   "bin": {
     "zerv": "zerv.ts",

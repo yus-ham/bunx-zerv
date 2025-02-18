@@ -4,7 +4,7 @@ import { dirname, join } from "path"
 import { networkInterfaces } from "os"
 import { version } from "./package.json"
 import { serve, Server, file, write, $ } from "bun"
-import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray, parseCLIArgs } from "./utils"
+import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray, parseCLIArgs, Options } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 
@@ -23,9 +23,9 @@ const inspectHeaders = (hdrs: Headers) => Bun.inspect(hdrs, {colors: true, compa
 const timestamp = (d = '') => styleText('blueBright', `[${(d = new Date().toISOString()), d.slice(0, 10)} ${d.slice(11, 23)}]`)
 
 export default async function run() {
-    const { values: argv, positionals } = parseCLIArgs(DEFAULT_CONFIG_FILE)!
+    const opts = parseCLIArgs(DEFAULT_CONFIG_FILE)!
 
-    if (argv?.help) {
+    if (opts.help) {
         console.info(gapura())
         console.info(`${styleText('yellow', 'Usage:')}\n  zerv [[<hostname>:]<port>] [<directory>] [...options]\n`)
         console.info(styleText('yellow', 'Arguments:'))
@@ -39,38 +39,36 @@ export default async function run() {
         return console.info('')
     }
 
-    if (argv) {
-        let config_file = argv.config
-        const parser = new NginxConfigParser()
+    let config_file = opts.config
+    const parser = new NginxConfigParser()
 
-        if (!await file(config_file).exists())
-            config_file = join(import.meta.dirname, DEFAULT_CONFIG_FILE)
+    if (!await file(config_file).exists())
+        config_file = join(import.meta.dirname, DEFAULT_CONFIG_FILE)
 
-        loadConfig(parser, config_file)
+    loadConfig(parser, config_file)
 
-        if (DEV_ENV && config_file === DEFAULT_CONFIG_FILE)
-            watch('config', { recursive: true }).on('change', () => loadConfig(parser, config_file))
+    if (DEV_ENV && config_file === DEFAULT_CONFIG_FILE)
+        watch('config', { recursive: true }).on('change', () => loadConfig(parser, config_file))
 
-        ensureServers(argv, positionals)
+    ensureServers(opts)
 
-        if (argv.save && !await file(argv.config).exists()) {
-            const cloned = structuredClone(global_config)
-            
-            for (const server of cloned.http.server) {
-                delete server.port
-                delete server.address
-                delete server.hostname
-                delete server.location_actions
-            }
-
-            await $`mkdir -p ${dirname(argv.config)}`;
-            await write(argv.config, parser.toConf(cloned))
+    if (opts.save && !await file(opts.config).exists()) {
+        const cloned = structuredClone(global_config)
+        
+        for (const server of cloned.http.server) {
+            delete server.port
+            delete server.address
+            delete server.hostname
+            delete server.location_actions
         }
 
-        console.info(gapura())
-        Bun.gc(true)
-        startServers()
+        await $`mkdir -p ${dirname(opts.config)}`;
+        await write(opts.config, parser.toConf(cloned))
     }
+
+    console.info(gapura())
+    Bun.gc(true)
+    startServers()
 }
 
 function loadConfig(parser: NginxConfigParser, file: string) {
@@ -92,6 +90,7 @@ type HandlerOpts = {
     server: Server;
     server_cfg: any;
     path_prefix?: string;
+    http_version: string;
     altered_headers?: Headers;
 }
 
@@ -172,7 +171,7 @@ function withHeaders(response: Response, opts: HandlerOpts, actions: any) {
     setResponseHeaders(response, global_config.http.add_header, opts)
     setResponseHeaders(response, opts.server_cfg.add_header, opts)
     setResponseHeaders(response, actions.add_header, opts)
-    console.info(`${timestamp()} < HTTP/1.1 ${response.status} ${response.statusText} | altered headers`, inspectHeaders(opts.altered_headers))
+    console.info(`${timestamp()} < HTTP/${opts.http_version} ${response.status} ${response.statusText} | altered headers`, inspectHeaders(opts.altered_headers))
     return response
 }
 
@@ -210,7 +209,7 @@ function setResponseHeaders(response: Response, headers: string[], opts: Handler
     }
 }
 
-function ensureServers(argv: any, [listen, root]: string[]) {
+function ensureServers(opts: Options) {
     global_config.http.add_header = toArray(global_config.http.add_header)
 
     Object.defineProperty(global_config, 'cached', {
@@ -219,15 +218,8 @@ function ensureServers(argv: any, [listen, root]: string[]) {
         value: {},
     })
 
-    if (listen) {
-        const [,, hostname, port] = listen.match(LISTEN_ADDR_RE) || []
-
-        if (root)
-            argv.root = root
-        else if (!port && port !== '0')
-            argv.root = listen
-
-        return global_config.http.server = [ getDefaultServer(argv, hostname, port) ]
+    if (opts.port) {
+        return global_config.http.server = [ getDefaultServer(opts) ]
     }
 
     const servers: Record<string, any> = {}
@@ -262,16 +254,14 @@ function ensureServers(argv: any, [listen, root]: string[]) {
     global_config.http.server = Object.values(servers)
 
     if (!global_config.http.server.length)
-        global_config.http.server.push(getDefaultServer())
+        global_config.http.server.push(getDefaultServer(opts))
 }
 
-function getDefaultServer(argv: any = {}, hostname?: string, port?: any) {
+function getDefaultServer(opts: Options) {
     return {
-        port,
-        hostname,
+        ...opts,
         index: ['index.html'],
-        root: (argv.root || process.cwd()).replaceAll('\\', '/'),
-        'location /': { try_files: '$uri $uri/ ' + (argv.spa ? '/index.html' : '=404') },
+        'location /': { try_files: '$uri $uri/ ' + (opts.spa ? '/index.html' : '=404') },
     }
 }
 
@@ -283,12 +273,12 @@ function onWscOpen(wsc: WebSocket, callback: Function) {
     }, 10)
 }
 
-function startServers(config?: any) {
+function startServers() {
     const workers_num = getMaxWorker(global_config)
 
     for (let i = 1; i <= workers_num; i++) {
-        for (config of global_config.http.server)
-            startServer(config as object, workers_num, i === workers_num)
+        for (const config of global_config.http.server)
+            startServer(config, workers_num, i === workers_num)
     }
 }
 
@@ -317,6 +307,7 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
 
             const req_url = new URL(req.url)
             const opts: HandlerOpts = {
+                http_version: '1.1',
                 req_id: Bun.randomUUIDv7(),
                 req,
                 req_url,

@@ -1,6 +1,7 @@
 import { parseArgs } from "util";
 
 const BYTE_UNITS = 'KMGTPEZY';
+const LISTEN_ADDR_RE = /^((.+):)?(\d+)$/
 
 export function toArray(data: any) {
     return Array.isArray(data) ? data : (data ? [data] : [])
@@ -16,9 +17,19 @@ export function removePropToArray(data: object, key: string) {
     return toArray(removeProp(data, key))
 }
 
-export function parseCLIArgs(config_file: string) {
+export type Options = {
+    help: boolean;
+    config: string;
+    save: boolean;
+    spa: boolean;
+    root: string;
+    port: string;
+    hostname: string;
+}
+
+export function parseCLIArgs(config_file: string, args?: string[]) {
     try {
-        return parseArgs({
+        const { values, positionals: [listen, root]} = parseArgs({
             allowPositionals: true,
             options: {
                 help: { type: 'boolean', short: 'h' },
@@ -26,7 +37,21 @@ export function parseCLIArgs(config_file: string) {
                 save: { type: 'boolean', short: 's' },
                 spa: { type: 'boolean' },
             },
-        })
+            ...(args ? {args} : {}),
+        }) as never as {values: Options; positionals: any}
+
+        const matches = listen?.match(LISTEN_ADDR_RE) || []
+        values.hostname = matches[2]
+        values.port = matches[3]
+
+        if (root)
+            values.root = root
+        else if (!values.port && values.port !== '0')
+            values.root = listen
+
+        values.root = (values.root || process.cwd()).replaceAll('\\', '/')
+
+        return values
     } catch(err: any) {
         if (err.message.startsWith('Unexpected argument'))
             return console.error(err.message.slice(0, err.message.indexOf("'. ") + 1))
@@ -86,3 +111,5 @@ export function getMaxWorker(config: any) {
         return navigator.hardwareConcurrency
     return parseInt(config.worker_processes) || 0
 }
+
+export default { parseCLIArgs }
