@@ -1,9 +1,14 @@
-import { describe, expect, it } from "bun:test";
-import { $, serve, sleep, spawn } from "bun";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { $, Server, serve, sleep, spawn } from "bun";
 import { parseCLIArgs } from "../utils";
 
 
 const DEFAULT_CONFIG_FILE = 'config/main/default.conf';
+
+type Zerv = {
+    stop: Function;
+    fetch: Function;
+}
 
 function zerv(args?: string | string[]) {
     args = String(args || '').split(' ')
@@ -155,34 +160,53 @@ describe('try_files', () => {
 })
 
 describe('proxy_pass', () => {
-    it(`should forward request to and get response from upstream`, async () => {
-        const testdir = `${import.meta.dirname}/server_root_upstream`
-        const server = zerv(`23456 -c ${testdir}/server.conf`)
-        const upstream = serve({
+    let testdir, server: Zerv, upstream: Server
+
+    beforeEach(() => {
+        testdir = `${import.meta.dirname}/server_root_upstream`
+        server = zerv(`23456 -c ${testdir}/server.conf`)
+        upstream = serve({
             reusePort: true,
             port: 23455,
             routes: { '/404/*': new Response('', {status: 404}) },
-            fetch: (req) => new Response(new URL(req.url).pathname),
+            fetch: (req) => new Response(
+                JSON.stringify({
+                    pathname: new URL(req.url).pathname,
+                    headers: req.headers,
+                }
+            )),
         })
+        return sleep(100)
+    })
 
-        await sleep(50).then(async () => {
-            const res = await server.fetch('/upstream/index.html')
-            const res1 = await server.fetch('/upstream/404/not/found')
-            const res2 = await server.fetch('/upstream-123-qwe') // handled by '/upstream-123'
-            const res3 = await server.fetch('/upstream-asd-123')
-            const res4 = await server.fetch('/upstream-asd')
+    afterEach(async () => {
+        await upstream.stop(true)
+        return server.stop()
+    })
 
-            expect(res.status).toBe(200)
-            expect(res1.status).toBe(404)
-            expect(res2.status).toBe(404)
-            expect(res3.status).toBe(200)
-            expect(res4.status).toBe(200)
-            expect((await res.text()).trim()).toMatch('/index.html')
-            expect((await res3.text()).trim()).toMatch('/')
-            expect((await res4.text()).trim()).toMatch('/')
+    it(`should forward request to and get response from upstream`, async () => {
+        const res = await server.fetch('/upstream/index.html')
+        const res1 = await server.fetch('/upstream/404/not/found')
+        const res2 = await server.fetch('/upstream-123-qwe') // handled by '/upstream-123'
+        const res3 = await server.fetch('/upstream-asd-123')
+        const res4 = await server.fetch('/upstream-asd')
+        const upstream_req = await res.json()
 
-            await upstream.stop(true)
-            await server.stop()
-        })
+        expect(res.status).toBe(200)
+        expect(res1.status).toBe(404)
+        expect(res2.status).toBe(404)
+        expect(res3.status).toBe(200)
+        expect(res4.status).toBe(200)
+        expect(upstream_req.headers['x-forwarded-proto']).toBe('http')
+        expect(upstream_req.headers['x-forwarded-host']).toBe('localhost:23456')
+        expect(upstream_req.headers['x-forwarded-for']).toMatch(/127\.0\.0\.1/)
+        expect(upstream_req.pathname).toMatch('/index.html')
+        expect((await res3.json()).pathname).toMatch('/')
+        expect((await res4.json()).pathname).toMatch('/')
+    })
+
+    it(`should set specified header to upstream`, async () => {
+        const res = await server.fetch('/upstream/index.html')
+        expect((await res.json()).headers['x-my-header']).not.toBeEmpty()
     })
 })

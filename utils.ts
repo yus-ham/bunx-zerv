@@ -17,7 +17,7 @@ export function removePropToArray(data: object, key: string) {
     return toArray(removeProp(data, key))
 }
 
-export type Options = {
+export type CLIOptions = {
     help: boolean;
     config: string;
     save: boolean;
@@ -38,7 +38,7 @@ export function parseCLIArgs(config_file: string, args?: string[]) {
                 spa: { type: 'boolean' },
             },
             ...(args ? {args} : {}),
-        }) as never as {values: Options; positionals: any}
+        }) as never as {values: CLIOptions; positionals: any}
 
         const matches = listen?.match(LISTEN_ADDR_RE) || []
         values.hostname = matches[2]

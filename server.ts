@@ -4,7 +4,7 @@ import { dirname, join } from "path"
 import { networkInterfaces } from "os"
 import { version } from "./package.json"
 import { serve, Server, file, write, $ } from "bun"
-import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray, parseCLIArgs, Options } from "./utils"
+import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray, parseCLIArgs, CLIOptions } from "./utils"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 
@@ -83,7 +83,7 @@ function loadConfig(parser: NginxConfigParser, file: string) {
     //console.info(Bun.inspect(global_config, {colors:true, depth:Infinity}))
 }
 
-type HandlerOpts = {
+type Options = {
     req_id: string;
     req: Request;
     req_url: URL;
@@ -91,12 +91,18 @@ type HandlerOpts = {
     server_cfg: any;
     path_prefix?: string;
     http_version: string;
-    altered_headers?: Headers;
+    altered_req_headers?: Headers;
+    altered_res_headers?: Headers;
+}
+
+type HandlerParams = {
+    argument: string;
+    actions: any;
 }
 
 const location_handlers = {
-    async try_files(files: string, opts: HandlerOpts) {
-        for (const entry of files?.split(' ') || []) {
+    async try_files(params: HandlerParams, opts: Options) {
+        for (const entry of params.argument.split(' ') || []) {
             if (entry === '=404')
                 return new Response(null, { status: HTTP_NOT_FOUND })
 
@@ -118,7 +124,8 @@ const location_handlers = {
         }
     },
 
-    async proxy_pass(target_url: string | URL, opts: HandlerOpts) {
+    async proxy_pass(params: HandlerParams, opts: Options) {
+        opts.altered_req_headers = new Headers()
         const start_time = timestamp()
 
         if (opts.path_prefix && !opts.req_url.pathname.startsWith(opts.path_prefix)) {
@@ -126,9 +133,11 @@ const location_handlers = {
             return
         }
 
+        let target_url: string | URL = params.argument
+
         try {
             target_url = new URL(target_url + opts.req_url.pathname.slice(opts.path_prefix?.length!) + opts.req_url.search)
-        } catch(e) {
+        } catch(e: any) {
             if (e.code !== 'ERR_INVALID_URL')
                 console.error(e)
 
@@ -142,6 +151,12 @@ const location_handlers = {
 
         opts.req.headers.delete('host')
 
+        for (const header of toArray(params.actions.proxy_set_header)) {
+            const [name, value] = parseHeader(header)
+            opts.altered_req_headers!.set(name, value)
+            opts.req.headers.set(name, value)
+        }
+
         const req_init: RequestInit = {
             headers: opts.req.headers,
             method: opts.req.method,
@@ -150,7 +165,7 @@ const location_handlers = {
 
         return fetch(target_url, req_init)
             .then(response => {
-                console.info(`${start_time}  proxy_pass >`, opts.req.method, String(target_url), `HTTP/${opts.http_version}`)
+                console.info(`${start_time}  proxy_pass >`, opts.req.method, String(target_url), `HTTP/${opts.http_version} | altered headers`, inspectHeaders(opts.altered_req_headers!))
                 console.info(`${timestamp()}  < HTTP/${opts.http_version}`, response.status, response.statusText, inspectHeaders(response.headers))
 
                 // @FIXME: I dont know much about gzip
@@ -162,29 +177,28 @@ const location_handlers = {
     },
 
     async proxy_http_version() { },
-    async proxy_set_header() { },
     async proxy_cache_bypass() { },
 }
 
-async function runActions(actions: any, opts: HandlerOpts): Promise<Response|undefined> {
+async function runActions(actions: any, opts: Options): Promise<Response|undefined> {
     if (opts.req.method === 'OPTIONS' && opts.req.headers.has('access-control-request-method')) {
-        return withHeaders(new Response(null, { status: 200 }), opts, actions)
+        return withHeaders(new Response(null, { status: 200 }), actions, opts)
     }
 
     for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
-        const response = await location_handlers[action]?.(argument, opts)
+        const response = await location_handlers[action]?.({argument, actions}, opts)
         if (response?.status >= 200) {
-            return withHeaders(response, opts, actions)
+            return withHeaders(response, actions, opts)
         }
     }
 }
 
-function withHeaders(response: Response, opts: HandlerOpts, actions: any) {
-    opts.altered_headers = new Headers()
+function withHeaders(response: Response, actions: any, opts: Options) {
+    opts.altered_res_headers = new Headers()
     setResponseHeaders(response, global_config.http.add_header, opts)
     setResponseHeaders(response, opts.server_cfg.add_header, opts)
     setResponseHeaders(response, actions.add_header, opts)
-    console.info(`${timestamp()} < HTTP/${opts.http_version} ${response.status} ${response.statusText} | altered headers`, inspectHeaders(opts.altered_headers))
+    console.info(`${timestamp()} < HTTP/${opts.http_version} ${response.status} ${response.statusText} | altered headers`, inspectHeaders(opts.altered_res_headers))
     return response
 }
 
@@ -199,11 +213,16 @@ const multi_value_headers = [
     'link',
 ]
 
-function setResponseHeaders(response: Response, headers: string[], opts: HandlerOpts) {
+function parseHeader(header: string) {
+    const space_pos = header.indexOf(' ')
+    const name = header.slice(0, space_pos).toLowerCase()
+    const value = header.slice(space_pos + 1).replace(/^["']|["']$/g, '')
+    return [name, value]
+}
+
+function setResponseHeaders(response: Response, headers: string[], opts: Options) {
     for (const header of headers || []) {
-        const space_pos = header.indexOf(' ')
-        const name = header.slice(0, space_pos).toLowerCase()
-        let value = header.slice(space_pos + 1).replace(/^["']|["']$/g, '')
+        let [name, value] = parseHeader(header)
 
         if (name.startsWith('access-control'))
             value = value.replace(' always', '')
@@ -218,11 +237,11 @@ function setResponseHeaders(response: Response, headers: string[], opts: Handler
             ? response.headers.append(name, value)
             : response.headers.set(name, value)
 
-        opts.altered_headers!.append(name, value)
+        opts.altered_res_headers!.append(name, value)
     }
 }
 
-function ensureServers(opts: Options) {
+function ensureServers(opts: CLIOptions) {
     global_config.http.add_header = toArray(global_config.http.add_header)
 
     Object.defineProperty(global_config, 'cached', {
@@ -266,7 +285,7 @@ function ensureServers(opts: Options) {
         global_config.http.server.push(getDefaultServer(opts))
 }
 
-function getDefaultServer(opts: Options) {
+function getDefaultServer(opts: CLIOptions) {
     return {
         ...opts,
         index: ['index.html'],
@@ -315,7 +334,7 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
             )
 
             const req_url = new URL(req.url)
-            const opts: HandlerOpts = {
+            const opts: Options = {
                 http_version: '1.1',
                 req_id: Bun.randomUUIDv7(),
                 req,
@@ -326,7 +345,7 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
 
             req.headers.set('x-forwarded-for', client_socket?.address!)
             req.headers.set('x-forwarded-host', req_url.host)
-            req.headers.set('x-forwarded-proto', req_url.protocol)
+            req.headers.set('x-forwarded-proto', req_url.protocol.slice(0, -1))
 
             for (const [path_prefix, actions] of Object.entries(server_cfg.location_actions)) {
                 if (req_url.pathname.startsWith(path_prefix)) {
@@ -386,7 +405,7 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
     print_log && printServerInfo(server_cfg, workers_num)
 }
 
-function catchUpstreamError(e: any, opts: HandlerOpts) {
+function catchUpstreamError(e: any, opts: Options) {
     console.error(e)
     if (e.code === 'ConnectionRefused')
         e.message = `Unable to connect to upstream server` + (DEV_ENV ? ` ${e.path}` : ``)
@@ -418,8 +437,8 @@ function setServerAddress(config: any, server: Server) {
     for (const interfaces of Object.values(nets)) {
         for (const net_interface of interfaces || []) {
             if (net_interface.address.startsWith('192.168')) {
-                    // @ts-ignore
-                    return config.address = `${server.protocol}://${net_interface.address}:${server.port}/`;
+                // @ts-ignore
+                return config.address = `${server.protocol}://${net_interface.address}:${server.port}/`;
             }
         }
     }
