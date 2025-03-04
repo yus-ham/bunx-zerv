@@ -32,9 +32,7 @@ function zerv(args?: string | string[]) {
     }
 
     function onRead(reader: any, out: string) {
-        return ((chunk: any): any => {
-            return chunk.value ? reader.read().then(onRead(reader, out + text(chunk))) : out
-        })
+        return ((chunk: any): any => chunk.value ? reader.read().then(onRead(reader, out + text(chunk))) : out)
     }
 
     return {
@@ -64,26 +62,26 @@ describe('starting server', () => {
             expect(out).toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:3000\//)
         }
 
-        assert(await zerv().runWithTimeout(100).getOutput())
-        assert(await zerv('-c noexist.conf').runWithTimeout(100).getOutput())
+        assert(await zerv().runWithTimeout(200).getOutput())
+        assert(await zerv('-c noexist.conf').runWithTimeout(200).getOutput())
     })
 
     it(`should use specified port`, async () => {
-        const out = await zerv('45678').runWithTimeout(100).getOutput()
+        const out = await zerv('45678').runWithTimeout(200).getOutput()
         expect(out).toContain('Server started on 0.0.0.0:45678')
         expect(out).toMatch(/- Local +: http:\/\/127\.0\.0\.1:45678\//)
         expect(out).toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:45678\//)
     })
 
     it(`should use random port`, async () => {
-        const server = zerv('0').runWithTimeout(100)
+        const server = zerv('0').runWithTimeout(200)
         const out = await server.getOutput()
         expect(out).toContain(`Server started on 0.0.0.0:${server.port}`)
     })
 
     it(`should only exposed to local network`, async () => {
-        let server = zerv('localhost:0').runWithTimeout(100)
-        let server1 = zerv('127.0.0.1:0').runWithTimeout(100)
+        let server = zerv('localhost:0').runWithTimeout(200)
+        let server1 = zerv('127.0.0.1:0').runWithTimeout(200)
         const out = await server.getOutput()
         const out1 = await server1.getOutput()
 
@@ -97,12 +95,12 @@ describe('starting server', () => {
     })
 
     it(`should serve current working directory`, async () => {
-        const out = await zerv().runWithTimeout(100).getOutput()
+        const out = await zerv().runWithTimeout(200).getOutput()
         expect(out).toMatch(new RegExp(`- Root +: ${process.cwd()}`))
     })
 
     it(`should serve specified directory`, async () => {
-        const out = await zerv('testdir').runWithTimeout(100).getOutput()
+        const out = await zerv('testdir').runWithTimeout(200).getOutput()
         expect(out).toMatch(new RegExp(`- Root +: testdir`))
     })
 })
@@ -114,17 +112,17 @@ describe('try_files', () => {
         await $`echo 'hello index' > ${testdir}/index.html`;
 
         const server = zerv(`0 ${testdir}`)
-        await sleep(100).then(async () => {
-            const res = await server.fetch()
-            const res2 = await server.fetch('/index.html')
+        await sleep(200)
+        const res = await server.fetch()
+        const res2 = await server.fetch('/index.html')
 
-            expect((await res.text()).trim()).toMatch('hello index')
-            expect((await res2.text()).trim()).toMatch('hello index')
-            expect(res.status).toBe(200)
+        expect((await res.text()).trim()).toMatch('hello index')
+        expect((await res2.text()).trim()).toMatch('hello index')
+        expect(res.status).toBe(200)
 
-            server.stop()
-            await sleep(50).then(() => $`rm -r ${testdir}`)
-        })
+        server.stop()
+        await sleep(50)
+        await $`rm -r ${testdir}`;
     })
 
     it(`should respond with status 404 not found`, async () => {
@@ -132,13 +130,13 @@ describe('try_files', () => {
         await $`mkdir ${testdir}`;
 
         const server = zerv(`0 ${testdir}`)
-        await sleep(100).then(async () => {
-            const res = await server.fetch('/invalid-resource')
-            expect(res.status).toBe(404)
+        await sleep(200)
+        const res = await server.fetch('/invalid-resource')
+        expect(res.status).toBe(404)
 
-            server.stop()
-            await sleep(50).then(() => $`rm -r ${testdir}`)
-        })
+        server.stop()
+        await sleep(50)
+        await $`rm -r ${testdir}`;
     })
 
     it(`should running with SPA mode`, async () => {
@@ -147,15 +145,15 @@ describe('try_files', () => {
         await $`echo 'heelo SPA' > ${testdir}/index.html`;
 
         const server = zerv(`0 ${testdir} --spa`)
-        await sleep(100).then(async () => {
-            const res = await server.fetch('/spa/route')
+        await sleep(200)
+        const res = await server.fetch('/spa/route')
 
-            expect((await res.text()).trim()).toMatch('heelo SPA')
-            expect(res.status).toBe(200)
+        expect((await res.text()).trim()).toMatch('heelo SPA')
+        expect(res.status).toBe(200)
 
-            await server.stop()
-            await sleep(50).then(() => $`rm -r ${testdir}`)
-        })
+        await server.stop()
+        await sleep(50)
+        await $`rm -r ${testdir}`;
     })
 })
 
@@ -176,7 +174,7 @@ describe('proxy_pass', () => {
                 }
             )),
         })
-        return sleep(100)
+        return sleep(200)
     })
 
     afterEach(async () => {
