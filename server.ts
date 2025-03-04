@@ -76,7 +76,7 @@ function loadConfig(parser: NginxConfigParser, file: string) {
         const config = parser.readConfigFile(file, { parseIncludes: true })
         Object.assign(global_config, config)
     } catch(err: any) {
-        console.error(err.message)
+        Bun.env.NODE_ENV === 'test' || console.error(err.message)
         const config = parser.readConfigFile(file, { parseIncludes: true, ignoreIncludeErrors: true })
         Object.assign(global_config, config)
     }
