@@ -197,7 +197,7 @@ describe('proxy_pass', () => {
         expect(res4.status).toBe(200)
         expect(upstream_req.headers['x-forwarded-proto']).toBe('http')
         expect(upstream_req.headers['x-forwarded-host']).toBe('localhost:23456')
-        expect(upstream_req.headers['x-forwarded-for']).toMatch(/127\.0\.0\.1/)
+        expect(upstream_req.headers['x-forwarded-for']).toMatch(/127\.0\.0\.1|::1/)
         expect(upstream_req.pathname).toMatch('/index.html')
         expect((await res3.json()).pathname).toMatch('/')
         expect((await res4.json()).pathname).toMatch('/')
