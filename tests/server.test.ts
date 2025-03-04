@@ -95,12 +95,12 @@ describe('starting server', () => {
     })
 
     it(`should serve current working directory`, async () => {
-        const out = await zerv().runWithTimeout(200).getOutput()
+        const out = await zerv('0').runWithTimeout(200).getOutput()
         expect(out).toMatch(new RegExp(`- Root +: ${process.cwd().replaceAll('\\', '/')}`))
     })
 
     it(`should serve specified directory`, async () => {
-        const out = await zerv('testdir').runWithTimeout(200).getOutput()
+        const out = await zerv('0 testdir').runWithTimeout(200).getOutput()
         expect(out).toMatch(new RegExp(`- Root +: testdir`))
     })
 })
