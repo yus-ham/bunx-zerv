@@ -161,6 +161,7 @@ const location_handlers = {
             headers: opts.req.headers,
             method: opts.req.method,
             body: await opts.req.arrayBuffer(),
+            redirect: 'manual',
         }
 
         return fetch(target_url, req_init)
