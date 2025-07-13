@@ -1,6 +1,6 @@
 {
   "name": "zerv",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Bun HTTP server with Nginx style configurations",
   "keywords": ["http server", "bun server", "file server", "nginx"],
   "repository": "github:yus-ham/bunx-zerv",
@@ -13,9 +13,9 @@
     "bun-types": "latest"
   },
   "scripts": {
-    "dev": "BUN_ENV=dev bun --watch zerv.ts",
+    "dev": "BUN_ENV=dev bun --watch zerv.ts"
   },
   "bin": {
-    "zerv": "zerv.ts",
+    "zerv": "zerv.ts"
   }
 }

@@ -22,6 +22,7 @@ export type CLIOptions = {
     config: string;
     save: boolean;
     spa: boolean;
+    cors: boolean;
     root: string;
     port: string;
     hostname: string;
@@ -35,6 +36,7 @@ export function parseCLIArgs(config_file: string, args?: string[]) {
                 help: { type: 'boolean', short: 'h' },
                 config: { type: 'string', short: 'c', default: config_file },
                 save: { type: 'boolean', short: 's' },
+                cors: { type: 'boolean' },
                 spa: { type: 'boolean' },
             },
             ...(args ? {args} : {}),

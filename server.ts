@@ -34,6 +34,7 @@ export default async function run() {
         console.info(`  ${styleText('green', 'directory')}      Root directory to be served at, defaults to current working directory`)
         console.info(styleText('yellow', '\nOptions:'))
         console.info(`  ${styleText('green', '--spa')}                  Enable SPA mode`)
+        console.info(`  ${styleText('green', '--cors')}                 Enable CORS mode`)
         console.info(`  ${styleText('green', '-c, --config <file>')}    Use config file`)
         console.info(`  ${styleText('green', '-s, --save')}             Clone default config and save into config file if does not exist`)
         return console.info('')
@@ -182,6 +183,14 @@ const location_handlers = {
 }
 
 async function runActions(actions: any, opts: Options): Promise<Response|undefined> {
+    if (opts.server_cfg.cors) {
+        const origin = opts.req.headers.get('origin')
+        if (origin) {
+            actions.add_header ||= []
+            actions.add_header.push(`access-control-allow-origin ${origin}`)
+        }
+    }
+
     if (opts.req.method === 'OPTIONS' && opts.req.headers.has('access-control-request-method')) {
         return withHeaders(new Response(null, { status: 200 }), actions, opts)
     }
@@ -225,10 +234,10 @@ function setResponseHeaders(response: Response, headers: string[], opts: Options
     for (const header of headers || []) {
         let [name, value] = parseHeader(header)
 
-        if (name.startsWith('access-control'))
+        if (name.toLowerCase().startsWith('access-control'))
             value = value.replace(' always', '')
 
-        if (name.endsWith('allow-headers')) {
+        if (name.toLowerCase().endsWith('allow-headers')) {
             value = value.replace('$http_access_control_request_headers', opts.req.headers.get('access-control-request-headers') || '')
             if (!value)
                 continue

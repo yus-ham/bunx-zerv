@@ -43,11 +43,11 @@ function zerv(args?: string | string[]) {
         runWithTimeout(kill_timeout: number) {
             stop(kill_timeout)
             return {
-                getOutput, 
+                getOutput,
                 get port() { return opts.port },
             }
         },
-        fetch: (path = '') => fetch(`http://localhost:${opts.port}${path}`),
+        fetch: (path = '', headers = {}) => fetch(`http://localhost:${opts.port}${path}`, { headers }),
     }
 }
 
@@ -154,6 +154,16 @@ describe('try_files', () => {
         await server.stop()
         await sleep(50)
         await $`rm -r ${testdir}`;
+    })
+})
+
+describe('cors', () => {
+    it(`should respond with cors enabled`, async () => {
+        const origin = 'http://cross.domain';
+        const server = zerv(`0 --cors`)
+        await sleep(476)
+        const res = await server.fetch('/', { origin })
+        expect(res.headers.get('access-control-allow-origin')).toBe(origin)
     })
 })
 
