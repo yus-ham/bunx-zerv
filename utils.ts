@@ -26,7 +26,7 @@ export type CLIOptions = {
     spa: boolean;
     cors: boolean;
     root: string;
-    port: string;
+    port?: string | number;
     hostname: string;
 }
 
@@ -46,18 +46,24 @@ export async function parseCLIArgs(config_file: string, args?: string[]) {
 
         const matches = listen?.match(LISTEN_ADDR_RE) || []
         values.hostname = matches[2]
-        values.port = matches[3]
 
         if (root) {
-            values.root = root.startsWith('/') ? root : process.cwd().replaceAll('\\', '/') + '/' + values.root
-
-            if (!await file(values.root).exists())
-                exit('Invalid directory to serve: ' + values.root)
+            values.root = normalizeDirectory(root)
+            values.port = parseInt(matches[3])
+        } else {
+            if (listen && !matches[3])
+                values.root = normalizeDirectory(listen)
+            else {
+                values.root = process.cwd().replaceAll('\\', '/')
+                if (matches[3])
+                    values.port = parseInt(matches[3])
+            }
         }
-        else if (!values.port && values.port !== '0')
-            values.root = listen
 
-        else values.root = process.cwd().replaceAll('\\', '/')
+        const root_stat = await file(values.root).stat()
+
+        if (!root_stat.isDirectory())
+            exit('Invalid directory to serve: ' + values.root)
 
         return values
     } catch(err: any) {
@@ -73,6 +79,13 @@ export async function parseCLIArgs(config_file: string, args?: string[]) {
 
         exit(err.message)
     }
+}
+
+function normalizeDirectory(directory: string) {
+    if (directory.startsWith('/'))
+        return directory
+
+    return process.cwd().replaceAll('\\', '/') + '/' + directory
 }
 
 function exit(message: string) {

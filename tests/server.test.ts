@@ -12,14 +12,14 @@ type Zerv = {
 
 function zerv(args?: string | string[]) {
     args = String(args || '').split(' ')
-    const opts: { port?: string } = {}
+    const opts: { port?: string | number } = {}
     
     parseCLIArgs(DEFAULT_CONFIG_FILE, args).then((res) => Object.assign(opts, res))
 
     const proc = spawn(['bun', './zerv.ts', ...args], {
         stdout: 'pipe',
         ipc(message) {
-            if (opts.port === '0')
+            if (opts.port === 0)
                 opts.port = message.http.port
         },
     })
