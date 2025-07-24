@@ -107,7 +107,9 @@ const location_handlers = {
             if (entry === '=404')
                 return new Response(null, { status: HTTP_NOT_FOUND })
 
-            const file_path = opts.server_cfg.root + entry.replace('$uri', opts.req_url.pathname)
+            const file_path = opts.server_cfg.root + entry
+                .replace('$uri', opts.req_url.pathname)
+                .replace(/%[0-9A-Fa-f]{2}/g, (code) => decodeURIComponent(code))
 
             if (entry.endsWith('/')) {
                 for (const index of opts.server_cfg.index) {
