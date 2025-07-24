@@ -35,7 +35,7 @@ export default async function run() {
         console.info(styleText('yellow', '\nOptions:'))
         console.info(`  ${styleText('green', '--spa')}                  Enable SPA mode`)
         console.info(`  ${styleText('green', '--cors')}                 Enable CORS mode`)
-        console.info(`  ${styleText('green', '-c, --config <file>')}    Use config file`)
+        console.info(`  ${styleText('green', '-c, --config [<file>]')}  Use config file, defaults to 'config/main/default.conf'`)
         console.info(`  ${styleText('green', '-s, --save')}             Clone default config and save into config file if does not exist`)
         return console.info('')
     }
