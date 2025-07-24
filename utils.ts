@@ -1,4 +1,6 @@
 import { parseArgs } from "util";
+import { file } from "bun";
+
 
 const BYTE_UNITS = 'KMGTPEZY';
 const LISTEN_ADDR_RE = /^((.+):)?(\d+)$/
@@ -28,7 +30,7 @@ export type CLIOptions = {
     hostname: string;
 }
 
-export function parseCLIArgs(config_file: string, args?: string[]) {
+export async function parseCLIArgs(config_file: string, args?: string[]) {
     try {
         const { values, positionals: [listen, root]} = parseArgs({
             allowPositionals: true,
@@ -46,23 +48,37 @@ export function parseCLIArgs(config_file: string, args?: string[]) {
         values.hostname = matches[2]
         values.port = matches[3]
 
-        if (root)
-            values.root = root
+        if (root) {
+            values.root = root.startsWith('/') ? root : process.cwd().replaceAll('\\', '/') + '/' + values.root
+
+            if (!await file(values.root).exists())
+                exit('Invalid directory to serve: ' + values.root)
+        }
         else if (!values.port && values.port !== '0')
             values.root = listen
 
-        values.root = (values.root || process.cwd()).replaceAll('\\', '/')
+        else values.root = process.cwd().replaceAll('\\', '/')
 
         return values
     } catch(err: any) {
         if (err.message.startsWith('Unexpected argument'))
-            return console.error(err.message.slice(0, err.message.indexOf("'. ") + 1))
+            exit(err.message.slice(0, err.message.indexOf("'. ") + 1))
+
         let matches
         if (matches = err.message.match(/Option '(-\w)[\s\S]+To specify an option[\s\S]+use '(--[\w]+)/))
-            return console.error(`Option '${matches[1]}, ${matches[2]} <value>' argument missing`)
+            exit(`Option '${matches[1]}, ${matches[2]} <value>' argument missing`)
+
         if (err.message.startsWith('Unknown option'))
-            return console.error(err.message.slice(0, err.message.indexOf("'.") + 2))
-        return console.error(err.message)
+            exit(err.message.slice(0, err.message.indexOf("'.") + 2))
+
+        exit(err.message)
+    }
+}
+
+function exit(message: string) {
+    if (process.env.NODE_ENV !== 'test') {
+        console.error(message)
+        process.exit(1)
     }
 }
 

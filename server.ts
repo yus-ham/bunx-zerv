@@ -23,7 +23,7 @@ const inspectHeaders = (hdrs: Headers) => Bun.inspect(hdrs, {colors: true, compa
 const timestamp = (d = '') => styleText('blueBright', `[${(d = new Date().toISOString()), d.slice(0, 10)} ${d.slice(11, 23)}]`)
 
 export default async function run() {
-    const opts = parseCLIArgs(DEFAULT_CONFIG_FILE)!
+    const opts = (await parseCLIArgs(DEFAULT_CONFIG_FILE))!
 
     if (opts.help) {
         console.info(gapura())
@@ -284,7 +284,6 @@ function ensureServers(opts: CLIOptions) {
                 servers[server.port].family = 'IPv6'
         }
 
-        server.root = server.root?.replaceAll('\\', '/')
         server.add_header = toArray(server.add_header)
         server.index = server.index.split(' ')
     }
