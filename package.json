@@ -1,6 +1,6 @@
 {
   "name": "zerv",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Bun HTTP server with Nginx style configurations",
   "keywords": ["http server", "bun server", "file server", "nginx"],
   "repository": "github:yus-ham/bunx-zerv",
