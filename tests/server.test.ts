@@ -10,26 +10,12 @@ type Zerv = {
     fetch: Function;
 }
 
-function zerv(args?: string | string[]) {
-    args = String(args || '').split(' ')
-    const opts: { port?: string | number } = {}
-    
-    parseCLIArgs(DEFAULT_CONFIG_FILE, args).then((res) => Object.assign(opts, res))
-
-    const proc = spawn(['bun', './zerv.ts', ...args], {
-        stdout: 'pipe',
-        ipc(message) {
-            if (opts.port === 0)
-                opts.port = message.http.port
-        },
-    })
-
-    const stop = (timeout = 0) => sleep(timeout).then(() => proc.kill())
-
+function parseZervProcess(proc: any, opts: any) {
     async function getOutput(): Promise<string> {
         if (proc.stdout) {
             const reader = proc.stdout.getReader()
-            return reader.read().then(onRead(reader, ''))
+            const output = await reader.read().then(onRead(reader, ''))
+            return Bun.stripANSI(output)
         }
         return '';
     }
@@ -37,6 +23,8 @@ function zerv(args?: string | string[]) {
     function onRead(reader: any, out: string) {
         return ((chunk: any): any => chunk.value ? reader.read().then(onRead(reader, out + text(chunk))) : out)
     }
+
+    const stop = (timeout = 0) => sleep(timeout).then(() => proc.kill())
 
     return {
         stop,
@@ -54,19 +42,51 @@ function zerv(args?: string | string[]) {
     }
 }
 
+function zerv(args?: string | string[], opts = {}, env?: Record<string, string>) {
+    args = String(args || '').split(' ')
+    opts = { ...opts }
+
+    parseCLIArgs(DEFAULT_CONFIG_FILE, args).then((res) => Object.assign(opts, res))
+
+    const proc = spawn(['bun', './zerv.ts', ...args], {
+        ...(process.env.TESTV == '2' ? {
+            stdout: 'inherit',
+            stderr: 'inherit',
+        } : {
+            stdout: 'pipe',
+        }),
+        ipc(message) {
+            if (opts.port === 0)
+                opts.port = message.http.port
+        },
+        env: { ...process.env, ...env },
+    })
+
+    return parseZervProcess(proc, opts)
+}
+
+
 const text = (buf: any) => new TextDecoder().decode(buf.value)
+const getRandomPort = () => Math.floor(Math.random() * (65535 - 49152 + 1)) + 49152;
 
 describe('starting server', () => {
     it(`should use default config`, async () => {
-        function assert(out: any) {
-            expect(out).toContain('Welcome to Zerv')
-            expect(out).toContain('Server started on 0.0.0.0:3000')
-            expect(out).toMatch(/- Local +: http:\/\/127\.0\.0\.1:3000\//)
-            expect(out).toMatch(/- Network +: http:\/\/192\.168\.\d+\.\d+:3000\//)
+        function assert(output: any, port: number) {
+            expect(output).toContain('Welcome to Zerv')
+            expect(output).toContain(`Server started on 0.0.0.0:${port}`)
+            expect(output).toMatch(new RegExp(`- Local +: http://127\\.0\\.0\\.1:${port}/`))
+            expect(output).toMatch(new RegExp(`- Network +: http://192\\.168\\.\\d+\\.\\d+:${port}/`))
         }
 
-        assert(await zerv().runWithTimeout(476).getOutput())
-        assert(await zerv('-c noexist.conf').runWithTimeout(476).getOutput())
+        const randomPort = getRandomPort();
+        const server = zerv('', {}, { PORT: String(randomPort) }).runWithTimeout(476)
+        const out = await server.getOutput()
+        assert(out, randomPort)
+
+        const randomPort2 = getRandomPort();
+        const server2 = zerv('-c noexist.conf', {}, { PORT: String(randomPort2) }).runWithTimeout(476)
+        const out2 = await server2.getOutput()
+        assert(out2, randomPort2)
     })
 
     it(`should use specified port`, async () => {
@@ -89,12 +109,12 @@ describe('starting server', () => {
         const out1 = await server1.getOutput()
 
         expect(out).toContain(`Server started on localhost:${server.port}`)
-        expect(out).toMatch(new RegExp(`- Local +: http://127\.0\.0\.1:${server.port}/`))
-        expect(out).not.toMatch(new RegExp(`- Network +: http://192\.168\.\d+\.\d+:${server.port}/`))
+        expect(out).toMatch(new RegExp(`- Local +: http://127\\.0\\.0\\.1:${server.port}/`))
+        expect(out).not.toMatch(new RegExp(`- Network +: http://192\\.168\\.\\d+\\.\\d+:${server.port}/`))
 
         expect(out1).toContain(`Server started on 127.0.0.1:${server1.port}`)
-        expect(out1).toMatch(new RegExp(`- Local +: http://127\.0\.0\.1:${server1.port}/`))
-        expect(out1).not.toMatch(new RegExp(`- Network +: http://192\.168\.\d+\.\d+:${server1.port}/`))
+        expect(out1).toMatch(new RegExp(`- Local +: http://127\\.0\\.0\\.1:${server1.port}/`))
+        expect(out1).not.toMatch(new RegExp(`- Network +: http://192\\.168\\.\\d+\\.\\\d+:${server1.port}/`))
     })
 
     it(`should serve current working directory`, async () => {
@@ -183,12 +203,17 @@ describe('proxy_pass', () => {
             reusePort: true,
             port: 23455,
             routes: { '/404/*': new Response('', { status: 404 }) },
-            fetch: (req) => new Response(
-                JSON.stringify({
-                    pathname: new URL(req.url).pathname,
-                    headers: req.headers,
-                }
-            )),
+            fetch: (req) => {
+                const url = new URL(req.url)
+                return new Response(JSON.stringify({
+                    upstream_req: {
+                        url: {
+                            pathname: url.pathname
+                        },
+                        headers: req.headers,
+                    }
+                }))
+            },
         })
         return sleep(476)
     })
@@ -201,26 +226,34 @@ describe('proxy_pass', () => {
     it(`should forward request to and get response from upstream`, async () => {
         const res = await server.fetch('/upstream/index.html')
         const res1 = await server.fetch('/upstream/404/not/found')
-        const res2 = await server.fetch('/upstream-123-qwe') // handled by '/upstream-123'
+        const res2 = await server.fetch('/upstream-123-qwe')
         const res3 = await server.fetch('/upstream-asd-123')
         const res4 = await server.fetch('/upstream-asd')
-        const upstream_req = await res.json()
+        const res5 = await server.fetch('/upstream-asd-handled-by/upstream-asd')
+        const res_c = await server.fetch('/scenario-c/page.html')
+        const res_5 = await server.fetch('/scenario-5/page.html')
+        const upstream_req = (await res.json()).upstream_req
 
         expect(res.status).toBe(200)
         expect(res1.status).toBe(404)
-        expect(res2.status).toBe(404)
+        expect(res2.status).toBe(200)
         expect(res3.status).toBe(200)
         expect(res4.status).toBe(200)
+        expect(res5.status).toBe(200)
+        expect(res_c.status).toBe(200)
+        expect(res_5.status).toBe(200)
         expect(upstream_req.headers['x-forwarded-proto']).toBe('http')
         expect(upstream_req.headers['x-forwarded-host']).toBe('localhost:23456')
         expect(upstream_req.headers['x-forwarded-for']).toMatch(/127\.0\.0\.1|::1/)
-        expect(upstream_req.pathname).toMatch('/index.html')
-        expect((await res3.json()).pathname).toMatch('/')
-        expect((await res4.json()).pathname).toMatch('/')
+        expect(upstream_req.url.pathname).toMatch('/index.html')
+        expect((await res3.json()).upstream_req.url.pathname).toMatch('/')
+        expect((await res4.json()).upstream_req.url.pathname).toMatch('/')
+        expect((await res_c.json()).upstream_req.url.pathname).toBe('/prefix-c/page.html')
+        expect((await res_5.json()).upstream_req.url.pathname).toBe('/prefix-5/scenario-5/page.html')
     })
 
     it(`should set specified header to upstream`, async () => {
         const res = await server.fetch('/upstream/index.html')
-        expect((await res.json()).headers['x-my-header']).not.toBeEmpty()
+        expect((await res.json()).upstream_req.headers['x-my-header']).not.toBeEmpty()
     })
 })
