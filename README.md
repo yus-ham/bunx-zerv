@@ -18,6 +18,7 @@ Arguments:
 
 Options:
   --spa                  Enable SPA mode
+  --cors                 Enable CORS mode
   -c, --config <file>    Use config file
   -s, --save             Clone default config and save into config file if does not exist
 ```

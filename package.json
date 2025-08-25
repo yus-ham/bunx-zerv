@@ -1,9 +1,17 @@
 {
   "name": "zerv",
-  "version": "1.8.1",
+  "version": "1.8.3",
   "description": "Bun HTTP server with Nginx style configurations",
-  "keywords": ["http server", "bun server", "file server", "nginx"],
-  "repository": "github:yus-ham/bunx-zerv",
+  "keywords": [
+    "http server",
+    "bun server",
+    "file server",
+    "nginx"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yus-ham/bunx-zerv.git"
+  },
   "license": "MIT",
   "author": "yus-ham",
   "dependencies": {
