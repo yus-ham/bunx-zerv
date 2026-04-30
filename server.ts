@@ -1,10 +1,10 @@
-import { watch } from "fs"
 import { styleText } from "util"
 import { dirname, join } from "path"
 import { networkInterfaces } from "os"
-import { version } from "./package.json"
 import { serve, Server, file, write, $, SocketAddress } from "bun"
-import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray, parseCLIArgs, CLIOptions, getKeepAliveTimeout } from "./utils"
+import { getClientMaxBodySize, getMaxWorker, toArray, removePropToArray, getKeepAliveTimeout } from "./utils"
+import { timestamp, CLIOptions } from "./console"
+import { startWatcher } from "./runner"
 import NginxConfigParser from "@webantic/nginx-config-parser"
 
 
@@ -19,27 +19,10 @@ const global_config: any = {}
 Bun.env.NODE_ENV ||= Bun.env.BUN_ENV
 const DEV_ENV = Boolean(Bun.env.NODE_ENV) && Bun.env.NODE_ENV?.startsWith('dev')
 
-const gapura = () => styleText(['bold', 'cyan'], 'Welcome to Zerv ') + `(${version})\n`
 const inspectHeaders = (hdrs: Headers, compact = true) => Bun.inspect(hdrs, { colors: true, compact, depth: Infinity }).slice(compact ? 12 : 0).replaceAll('\\"', '"')
-const timestamp = (d = '') => styleText('blueBright', `[${(d = new Date().toISOString()), d.slice(0, 10)} ${d.slice(11, 23)}]`)
 
-export default async function run() {
-    const opts = (await parseCLIArgs(DEFAULT_CONFIG_FILE))!
-
-    if (opts.help) {
-        console.info(gapura())
-        console.info(`${styleText('yellow', 'Usage:')}\n  zerv [[<hostname>:]<port>] [<directory>] [...options]\n`)
-        console.info(styleText('yellow', 'Arguments:'))
-        console.info(`  ${styleText('green', 'hostname')}       Host name to be listen on, defaults to ${styleText('green', '0.0.0.0')}`)
-        console.info(`  ${styleText('green', 'port')}           Port to be listen on, defaults to ${styleText('green', '3000')}`)
-        console.info(`  ${styleText('green', 'directory')}      Root directory to be served at, defaults to current working directory`)
-        console.info(styleText('yellow', '\nOptions:'))
-        console.info(`  ${styleText('green', '--spa')}                  Enable SPA mode`)
-        console.info(`  ${styleText('green', '--cors')}                 Enable CORS mode`)
-        console.info(`  ${styleText('green', '-c, --config [<file>]')}  Use config file, defaults to 'config/main/default.conf'`)
-        console.info(`  ${styleText('green', '-s, --save')}             Clone default config and save into config file if does not exist`)
-        return console.info('')
-    }
+export default async function run(opts: CLIOptions) {
+    const DEFAULT_CONFIG_FILE = 'config/main/default.conf'
 
     let config_file = opts.config
     const parser = new NginxConfigParser()
@@ -52,8 +35,16 @@ export default async function run() {
     if (opts.cors)
         global_config.cors = true;
 
-    if (DEV_ENV && config_file === DEFAULT_CONFIG_FILE)
+    if (opts.watch) {
+        global_config.watch = opts.watch
+        global_config.watchExec = opts.watchExec
+        startWatcher(opts)
+    }
+
+    if (DEV_ENV && config_file === DEFAULT_CONFIG_FILE) {
+        const { watch } = await import("fs")
         watch('config', { recursive: true }).on('change', () => loadConfig(parser, config_file))
+    }
 
     ensureServers(opts)
 
@@ -71,7 +62,6 @@ export default async function run() {
         await write(opts.config, parser.toConf(cloned))
     }
 
-    console.info(gapura())
     Bun.gc(true)
     startServers()
 }
@@ -80,6 +70,22 @@ function loadConfig(parser: NginxConfigParser, file: string) {
     try {
         const config = parser.readConfigFile(file, { parseIncludes: true })
         Object.assign(global_config, config)
+
+        for (const map_config of toArray(config.map)) {
+            const directive = Object.keys(map_config)[0]
+            const [src_var, dst_var] = directive.split(' ')
+            const mappings = {}
+
+            for (const key in map_config[directive]) {
+                if (key !== '__name') {
+                    mappings[key] = map_config[directive][key]
+                }
+            }
+            global_config.http.maps[dst_var] = {
+                src_var,
+                mappings
+            }
+        }
     } catch (err: any) {
         Bun.env.NODE_ENV === 'test' || console.warn(styleText('yellowBright', err.message))
         const config = parser.readConfigFile(file, { parseIncludes: true, ignoreIncludeErrors: true })
@@ -98,6 +104,7 @@ type Options = {
     altered_req_headers?: Headers
     altered_res_headers?: Headers
     client_socket: SocketAddress
+    resolved_root: string
 }
 
 type HandlerParams = {
@@ -105,14 +112,31 @@ type HandlerParams = {
     actions: any
 }
 
+function resolveRoot(root: string, opts: Options): string {
+    if (root.startsWith('$')) {
+        const maps = global_config.http.maps
+        const mapped = maps[root]
+        if (mapped) {
+            const src_val = resolveVars(mapped.src_var, opts)
+            return mapped.mappings[src_val] || mapped.mappings.default || ''
+        }
+        return ''
+    }
+    return root
+}
+
 const location_handlers = {
     async try_files(params: HandlerParams, opts: Options) {
         for (const entry of params.argument.split(' ') || []) {
-            if (entry === '=404')
+            if (entry === '=404') {
+                if (opts.server_cfg.spa) {
+                    const index_file = file(opts.resolved_root + '/index.html')
+                    if (await index_file.exists()) return new Response(index_file, { status: HTTP_OK })
+                }
                 return new Response(null, { status: HTTP_NOT_FOUND })
+            }
 
-            const file_path = opts.server_cfg.root + entry
-                .replace('$uri', opts.req_url.pathname)
+            const file_path = resolveVars(opts.resolved_root + entry, opts)
                 .replace(/%[0-9A-Fa-f]{2}/g, (code) => decodeURIComponent(code))
 
             if (entry.endsWith('/')) {
@@ -134,11 +158,11 @@ const location_handlers = {
     async proxy_pass(params: HandlerParams, opts: Options) {
         opts.altered_req_headers = new Headers()
         const start_time = timestamp()
-        let target_url: string | URL = params.argument
+        const target_arg = opts.server_cfg.root.startsWith('$') ? params.argument.replace(opts.server_cfg.root, opts.resolved_root) : params.argument
+        let target_url: string | URL = resolveVars(target_arg, opts)
         let path_to_append: string = opts.req_url.pathname
 
         try {
-
             const should_strip_prefix = target_url.endsWith('/') && (!opts.path_prefix || opts.path_prefix?.endsWith('/'))
 
             if (should_strip_prefix)
@@ -177,7 +201,6 @@ const location_handlers = {
             signal: AbortSignal.timeout(parseInt(params.actions.proxy_read_timeout) || 60_000),
             redirect: 'manual',
         }
-
         
         return fetch(target_url, req_init)
             .then(response => {
@@ -197,7 +220,6 @@ const location_handlers = {
 }
 
 async function runActions(actions: any, opts: Options): Promise<Response | undefined> {
-
     if (global_config.cors) {
         const origin = opts.req.headers.get('origin')
 
@@ -237,12 +259,59 @@ async function runActions(actions: any, opts: Options): Promise<Response | undef
         return withHeaders(new Response(null, { status: 200 }), actions, opts)
     }
 
+    let initial_response: Response | undefined;
+
     for (const [action, argument] of Object.entries(actions)) { // @ts-ignore
-        const response = await location_handlers[action]?.({ argument, actions }, opts)
+        const response = await location_handlers[action]?.({ argument, actions }, opts);
         if (response?.status >= 200) {
-            return withHeaders(response, actions, opts)
+            initial_response = response;
+            break;
         }
     }
+
+    if (!initial_response) {
+        return withHeaders(new Response(null, { status: HTTP_NOT_FOUND }), actions, opts);
+    }
+
+    let final_response = initial_response;
+
+    if (actions.sub_filter) {
+        const sub_filters = toArray(actions.sub_filter);
+        const sub_filter_once = actions.sub_filter_once === 'on' || (actions.sub_filter_once !== 'off');
+        const content_type = final_response.headers.get('content-type');
+        const content_encoding = final_response.headers.get('content-encoding');
+
+        if (content_type && content_type.startsWith('text/') && !content_encoding) {
+            let body = await final_response.text();
+
+            for (const filter_arg of sub_filters) {
+                const matches = filter_arg.match(/^"([^"]*)"\s+"([^"]*)"$/);
+                if (matches) {
+                    const old_string = matches[1];
+                    const new_string = matches[2];
+
+                    if (sub_filter_once) {
+                        body = body.replace(old_string, new_string);
+                    } else {
+                        body = body.replaceAll(old_string, new_string);
+                    }
+                } else {
+                    console.warn(`[Zerv Sub_filter] Invalid sub_filter syntax: ${filter_arg}`);
+                }
+            }
+
+            final_response = new Response(body, {
+                status: final_response.status,
+                statusText: final_response.statusText,
+                headers: final_response.headers,
+            });
+            final_response.headers.set('content-length', String(new TextEncoder().encode(body).length));
+        } else if (content_encoding) {
+            console.warn(`[Zerv Sub_filter] Skipping sub_filter for compressed content (${content_encoding}).`);
+        }
+    }
+
+    return withHeaders(final_response, actions, opts);
 }
 
 function withHeaders(response: Response, actions: any, opts: Options) {
@@ -254,6 +323,29 @@ function withHeaders(response: Response, actions: any, opts: Options) {
     console.info(`${timestamp()} < HTTP/${opts.http_version} ${response.status} ${response.statusText} | altered headers`, inspectHeaders(opts.altered_res_headers))
     return response
 }
+
+function resolveVars(str: string, opts: Options, defaultVal?: string): string {
+    return str.replace(/\$([a-zA-Z0-9_]+)/g, (match, var_name) => {
+        const full_var = `$${var_name}`
+        const maps = global_config.http.maps
+        const mapped = maps[full_var]
+
+        if (mapped) {
+            const src_val = resolveVars(mapped.src_var, opts, defaultVal)
+            return mapped.mappings[src_val] || mapped.mappings.default || defaultVal || match
+        }
+
+        switch (full_var) {
+            case '$uri':
+                return opts.req_url.pathname
+            case '$host':
+                return opts.req_url.hostname
+            default:
+                return defaultVal || match
+        }
+    })
+}
+
 
 const multi_value_headers = [
     'cache-control',
@@ -287,6 +379,7 @@ function setResponseHeaders(response: Response, headers: string[], opts: Options
 
 function ensureServers(opts: CLIOptions) {
     global_config.http.add_header = toArray(global_config.http.add_header)
+    global_config.http.maps = {}
 
     Object.defineProperty(global_config, 'cached', {
         enumerable: false,
@@ -331,8 +424,16 @@ function ensureServers(opts: CLIOptions) {
             server.port = determined_port
         }
 
+        server.spa = opts.spa || server.spa
+        server.cors = opts.cors || server.cors
+
         server.add_header = toArray(server.add_header)
         server.index = server.index.split(' ')
+        
+        if (opts.root && (server.root?.startsWith('$') || !server.root)) {
+            server.root = opts.root
+        }
+
         setupLocationActions(server)
 
         processed_servers[server.port] ||= []
@@ -351,6 +452,7 @@ function ensureServers(opts: CLIOptions) {
 function getDefaultServer(opts: CLIOptions) {
     return {
         ...opts,
+        root: opts.root,
         index: ['index.html'],
         'location /': { try_files: '$uri $uri/ ' + (opts.spa ? '/index.html' : '=404') },
     }
@@ -405,6 +507,7 @@ function startServer(server_cfg: any, workers_num: number, print_log = false) {
                 server,
                 server_cfg,
                 client_socket,
+                resolved_root: resolveRoot(server_cfg.root, { server_cfg } as any),
             }
 
             
@@ -486,6 +589,13 @@ function printServerInfo(config: any, workers_num: number) {
         console.info(styleText('green', `    - Network   : ${config.address}`))
 
     console.info(styleText('green', `    - Root      : ${config.root}`))
+    console.info(styleText('green', `    - SPA       : ${config.spa ? 'yes' : 'no'}`))
+    console.info(styleText('green', `    - CORS      : ${config.cors ? 'yes' : 'no'}`))
+    
+    if (global_config.watch) {
+        console.info(styleText('cyan', `    - Watch Dir : ${global_config.watch}`))
+        console.info(styleText('cyan', `    - Watch Exec: ${global_config.watchExec || 'none'}`))
+    }
 }
 
 function setServerAddress(config: any, server: Server) {
