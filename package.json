@@ -1,6 +1,6 @@
 {
   "name": "zerv",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "description": "Bun HTTP server with Nginx style configurations",
   "keywords": [
     "http server",
